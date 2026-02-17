@@ -1,18 +1,30 @@
-# Claude Code using Databricks Foundational Model API
+# Coding Agents with Databricks Foundation Model API
 
-Set up [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to run against the Anthropic models served through [Databricks Foundation Model API (FMAPI)](https://docs.databricks.com/en/machine-learning/foundation-models/index.html) in a single command.
+Set up coding agents to run against models served through [Databricks Foundation Model API (FMAPI)](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis). FMAPI provides a unified gateway for serving foundation models from your Databricks workspace, enabling coding agents to leverage enterprise-grade model serving with built-in governance, security, and observability.
 
-## Prerequisites
+## Supported Coding Agents
+
+FMAPI supports various coding agents today. The table below breaks down the Coding Agents that Databricks Foundational Model API supports today, and the quickstart script you can use to set it up.
+
+| Coding Agent | FMAPI Support | Setup Script |
+|---|---|---|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Supported | `setup-fmapi-claudecode.sh` |
+| [OpenAI Codex](https://openai.com/index/codex/) | Supported | Script not yet available |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Supported | Script not yet available |
+
+## Claude Code
+
+### Prerequisites
 
 - **macOS** with `zsh` or `bash`
 - [Homebrew](https://brew.sh/) (`brew`)
 - [`jq`](https://jqlang.github.io/jq/) (install with `brew install jq`)
 - A Databricks workspace with FMAPI enabled
 
-## Quick Start
+### Quick Start
 
 ```bash
-lets bash setup-fmapi-claudecode.sh
+bash setup-fmapi-claudecode.sh
 ```
 
 The script will prompt you for:
@@ -22,7 +34,7 @@ The script will prompt you for:
 | **Workspace URL** | Text input | Your Databricks workspace URL (e.g. `https://my-workspace.cloud.databricks.com`) |
 | **CLI profile name** | Text input | Name for the Databricks CLI authentication profile (e.g. `my-profile`) |
 | **Model** | Text input | The model to use. Defaults to `databricks-claude-opus-4-6` |
-| **Command name** | Arrow-key selector | The shell command to invoke Claude with FMAPI (see [Command name options](#command-name-options) below) |
+| **Command name** | Arrow-key selector | The shell command to invoke Claude Code with FMAPI (see [Command name options](#command-name-options) below) |
 | **Settings location** | Arrow-key selector | Where to write the `.claude/settings.json` file (current directory, home directory, or a custom path) |
 
 > The **Command name** and **Settings location** prompts use an interactive arrow-key selector &mdash; use the up/down arrow keys to navigate and Enter to confirm.
@@ -45,18 +57,18 @@ During setup you can choose what command to use:
 
 If you re-run the script and pick a different command name, the old wrapper is automatically removed.
 
-## What the Script Does
+### What the Script Does
 
-### 1. Installs dependencies
+#### 1. Installs dependencies
 
 - **Claude Code** &mdash; installed via `curl -fsSL https://claude.ai/install.sh | bash` if not already present.
 - **Databricks CLI** &mdash; installed via Homebrew (`brew tap databricks/tap && brew install databricks`) if not already present.
 
-### 2. Authenticates with Databricks
+#### 2. Authenticates with Databricks
 
 Attempts to retrieve an OAuth token using `databricks auth token --profile <profile>`. If no valid token exists, it triggers `databricks auth login` to start the OAuth flow in your browser, then retrieves the token.
 
-### 3. Writes `.claude/settings.json`
+#### 3. Writes `.claude/settings.json`
 
 Creates or merges environment variables into your Claude Code settings file at the chosen location. The settings configure Claude Code to route API calls through your Databricks workspace:
 
@@ -73,11 +85,11 @@ Creates or merges environment variables into your Claude Code settings file at t
 
 If the settings file already exists, the script merges the new `env` values into it without overwriting other settings.
 
-### 4. Adds the `fmapi-claude` shell wrapper
+#### 4. Adds the `fmapi-claude` shell wrapper
 
 Appends a shell function to your `~/.zshrc` (or `~/.bashrc`) that wraps the `claude` command with automatic token refresh logic.
 
-## Using the wrapper command
+### Using the wrapper command
 
 The wrapper (default: `fmapi-claude`, or whatever name you chose during setup) is a drop-in replacement for the `claude` command. It accepts all the same arguments and flags &mdash; the only difference is that it checks your Databricks token before each invocation and refreshes it if it has expired.
 
@@ -97,7 +109,7 @@ fmapi-claude --help
 
 > **Tip:** If you chose `claude` as the command name, just replace `fmapi-claude` with `claude` in the examples above &mdash; every `claude` invocation will automatically refresh tokens.
 
-### How token refresh works
+#### How token refresh works
 
 Each time you run the wrapper command:
 
@@ -109,7 +121,9 @@ Each time you run the wrapper command:
 
 If you use the plain `claude` command instead, it will still work as long as the token in `settings.json` hasn't expired &mdash; but it won't auto-refresh.
 
-## Available Models
+### Available Models
+
+Models available through FMAPI depend on what is enabled in your Databricks workspace. The setup script supports:
 
 | Model ID | Description |
 |---|---|
@@ -117,7 +131,7 @@ If you use the plain `claude` command instead, it will still work as long as the
 | `databricks-claude-sonnet-4-5` | Claude Sonnet 4.5 |
 | `databricks-claude-haiku-4-5` | Claude Haiku 4.5 |
 
-## Re-running the Script
+### Re-running the Script
 
 You can safely re-run `setup-fmapi-claudecode.sh` at any time to:
 
@@ -127,7 +141,7 @@ You can safely re-run `setup-fmapi-claudecode.sh` at any time to:
 
 The script will update the existing shell wrapper in-place rather than appending a duplicate.
 
-## Troubleshooting
+### Troubleshooting
 
 **"Workspace URL must start with https://"**
 Provide the full URL including the scheme, e.g. `https://my-workspace.cloud.databricks.com`.
@@ -140,3 +154,11 @@ Run `source ~/.zshrc` (or `source ~/.bashrc`) or open a new terminal after runni
 
 **Claude Code returns authentication errors**
 Your OAuth token may have fully expired. Run `fmapi-claude` to trigger a refresh, or re-run the setup script.
+
+## OpenAI Codex
+
+FMAPI supports OpenAI Codex today. A setup script for this repo is not yet available &mdash; contributions welcome.
+
+## Gemini CLI
+
+FMAPI supports Gemini CLI today. A setup script for this repo is not yet available &mdash; contributions welcome.
