@@ -9,6 +9,84 @@ info()    { echo -e "  ${CYAN}::${RESET} $1"; }
 success() { echo -e "  ${GREEN}${BOLD}ok${RESET} $1"; }
 error()   { echo -e "\n  ${RED}${BOLD}!! ERROR${RESET}${RED} $1${RESET}\n" >&2; }
 
+# ── Interactive selector ─────────────────────────────────────────────────────
+# Usage: select_option "Prompt" "label1|desc1" "label2|desc2" ...
+# Sets SELECT_RESULT to the 1-based index of the chosen option.
+select_option() {
+  local prompt="$1"; shift
+  local options=("$@")
+  local count=${#options[@]}
+  local cur=0
+
+  # Hide cursor, restore on exit/interrupt
+  tput civis 2>/dev/null || true
+  trap 'tput cnorm 2>/dev/null || true' RETURN
+
+  # Print prompt
+  echo -e "  ${CYAN}?${RESET} ${prompt}"
+
+  # Draw all options
+  for i in "${!options[@]}"; do
+    local label="${options[$i]%%|*}"
+    local desc="${options[$i]#*|}"
+    if (( i == cur )); then
+      echo -e "  ${CYAN}❯${RESET} ${BOLD}${label}${RESET}  ${DIM}${desc}${RESET}"
+    else
+      echo -e "    ${label}  ${DIM}${desc}${RESET}"
+    fi
+  done
+
+  # Read keys and redraw
+  while true; do
+    local key=""
+    IFS= read -rsn1 key
+    case "$key" in
+      $'\x1b')  # escape sequence
+        IFS= read -rsn2 key
+        case "$key" in
+          '[A') (( cur > 0 )) && (( cur-- )) || true ;;          # up
+          '[B') (( cur < count - 1 )) && (( cur++ )) || true ;;  # down
+        esac
+        ;;
+      '')  # Enter
+        break
+        ;;
+    esac
+
+    # Move cursor up by $count lines and redraw options
+    printf '\033[%dA' "$count"
+    for i in "${!options[@]}"; do
+      local label="${options[$i]%%|*}"
+      local desc="${options[$i]#*|}"
+      # Clear line then print
+      printf '\033[2K'
+      if (( i == cur )); then
+        echo -e "  ${CYAN}❯${RESET} ${BOLD}${label}${RESET}  ${DIM}${desc}${RESET}"
+      else
+        echo -e "    ${label}  ${DIM}${desc}${RESET}"
+      fi
+    done
+  done
+
+  # Replace the list with the selected item (move up, clear, print)
+  printf '\033[%dA' "$count"
+  for (( i = 0; i < count; i++ )); do
+    printf '\033[2K'
+    if (( i == 0 )); then
+      local label="${options[$cur]%%|*}"
+      echo -e "  ${GREEN}✔${RESET} ${label}"
+    else
+      echo ""
+    fi
+  done
+  # Move back up past blank lines
+  if (( count > 1 )); then
+    printf '\033[%dA' "$((count - 1))"
+  fi
+
+  SELECT_RESULT=$(( cur + 1 ))
+}
+
 # ── Help ──────────────────────────────────────────────────────────────────────
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && {
   echo "Usage: bash setup_fmapi_cc.sh"
@@ -31,12 +109,28 @@ read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name: ")" DATABRI
 read -rp "$(echo -e "  ${CYAN}?${RESET} Model ${DIM}[databricks-claude-opus-4-6]${RESET}: ")" ANTHROPIC_MODEL
 ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-databricks-claude-opus-4-6}"
 
-echo -e "  ${CYAN}?${RESET} Settings location ${DIM}[1]${RESET}:"
-echo -e "    1) Current directory  ${DIM}(./.claude/settings.json)${RESET}"
-echo -e "    2) Home directory     ${DIM}(~/.claude/settings.json)${RESET}"
-echo -e "    3) Custom path"
-read -rp "$(echo -e "  ${CYAN}>${RESET} ")" SETTINGS_CHOICE
-SETTINGS_CHOICE="${SETTINGS_CHOICE:-1}"
+select_option "Command name" \
+  "fmapi-claude|separate command, default" \
+  "claude|override the default claude command" \
+  "Custom|enter your own command name"
+CMD_CHOICE="$SELECT_RESULT"
+
+case "$CMD_CHOICE" in
+  1) CMD_NAME="fmapi-claude" ;;
+  2) CMD_NAME="claude" ;;
+  3)
+    read -rp "$(echo -e "  ${CYAN}?${RESET} Command name: ")" CMD_NAME
+    [[ -z "$CMD_NAME" ]] && { error "Command name is required."; exit 1; }
+    # Validate: must be a valid shell function name (alphanumeric, hyphens, underscores)
+    [[ "$CMD_NAME" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { error "Invalid command name: '$CMD_NAME'. Use letters, numbers, hyphens, and underscores."; exit 1; }
+    ;;
+esac
+
+select_option "Settings location" \
+  "Current directory|./.claude/settings.json" \
+  "Home directory|~/.claude/settings.json" \
+  "Custom path|enter your own path"
+SETTINGS_CHOICE="$SELECT_RESULT"
 
 case "$SETTINGS_CHOICE" in
   1)
@@ -52,9 +146,6 @@ case "$SETTINGS_CHOICE" in
     CUSTOM_PATH="${CUSTOM_PATH/#\~/$HOME}"
     mkdir -p "$CUSTOM_PATH"
     SETTINGS_BASE="$(cd "$CUSTOM_PATH" && pwd)"
-    ;;
-  *)
-    error "Invalid choice: $SETTINGS_CHOICE"; exit 1
     ;;
 esac
 
@@ -131,15 +222,27 @@ echo -e "\n${BOLD}Shell wrapper${RESET}"
 RC_FILE="$HOME/.zshrc"
 [[ "$SHELL" != */zsh ]] && RC_FILE="$HOME/.bashrc"
 
-BEGIN_MARKER="# >>> dbx-fmapi-claude wrapper >>>"
-END_MARKER="# <<< dbx-fmapi-claude wrapper <<<"
+BEGIN_MARKER="# >>> ${CMD_NAME} wrapper >>>"
+END_MARKER="# <<< ${CMD_NAME} wrapper <<<"
 
-# Remove old claude_fmapi wrapper if present
-OLD_MARKER="# >>> claude_fmapi wrapper >>>"
-OLD_END="# <<< claude_fmapi wrapper <<<"
-if grep -qF "$OLD_MARKER" "$RC_FILE" 2>/dev/null; then
-  sed -i '' "/$OLD_MARKER/,/$OLD_END/d" "$RC_FILE"
-  info "Removed old claude_fmapi wrapper."
+# Remove legacy wrapper names if present
+for OLD_NAME in "claude_fmapi" "dbx-fmapi-claude"; do
+  OLD_MARKER="# >>> ${OLD_NAME} wrapper >>>"
+  OLD_END="# <<< ${OLD_NAME} wrapper <<<"
+  if grep -qF "$OLD_MARKER" "$RC_FILE" 2>/dev/null; then
+    sed -i '' "/$OLD_MARKER/,/$OLD_END/d" "$RC_FILE"
+    info "Removed old ${OLD_NAME} wrapper."
+  fi
+done
+
+# Remove previous fmapi-claude wrapper if the command name changed
+if [[ "$CMD_NAME" != "fmapi-claude" ]]; then
+  OLD_DBX_MARKER="# >>> fmapi-claude wrapper >>>"
+  OLD_DBX_END="# <<< fmapi-claude wrapper <<<"
+  if grep -qF "$OLD_DBX_MARKER" "$RC_FILE" 2>/dev/null; then
+    sed -i '' "/$OLD_DBX_MARKER/,/$OLD_DBX_END/d" "$RC_FILE"
+    info "Removed old fmapi-claude wrapper."
+  fi
 fi
 
 if grep -qF "$BEGIN_MARKER" "$RC_FILE" 2>/dev/null; then
@@ -156,8 +259,8 @@ fi
 
 cat >> "$RC_FILE" << WRAPPER
 
-# >>> dbx-fmapi-claude wrapper >>>
-dbx-fmapi-claude() {
+# >>> ${CMD_NAME} wrapper >>>
+${CMD_NAME}() {
   local sf="${SETTINGS_FILE}"
   [[ ! -f "\$sf" ]] && { command claude "\$@"; return; }
 
@@ -170,28 +273,28 @@ dbx-fmapi-claude() {
   if [[ -z "\$token" ]] || \\
      [[ "\$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer \$token" "\$host/api/2.0/token/list" 2>/dev/null)" != "200" ]]; then
 
-    echo "[dbx-fmapi-claude] Refreshing token ..."
+    echo "[${CMD_NAME}] Refreshing token ..."
     local new_token=""
     new_token=\$(databricks auth token --profile "\$profile" --output json 2>/dev/null | jq -r '.access_token // empty') || true
 
     if [[ -z "\$new_token" ]]; then
-      echo "[dbx-fmapi-claude] OAuth login required ..."
+      echo "[${CMD_NAME}] OAuth login required ..."
       databricks auth login --host "\$host" --profile "\$profile"
       new_token=\$(databricks auth token --profile "\$profile" --output json 2>/dev/null | jq -r '.access_token // empty') || true
     fi
 
     if [[ -n "\$new_token" ]]; then
       jq --arg tok "\$new_token" '.env.ANTHROPIC_AUTH_TOKEN = \$tok' "\$sf" > "\${sf}.tmp" && mv "\${sf}.tmp" "\$sf"
-      echo "[dbx-fmapi-claude] Token refreshed."
+      echo "[${CMD_NAME}] Token refreshed."
     else
-      echo "[dbx-fmapi-claude] Error: could not obtain token." >&2
+      echo "[${CMD_NAME}] Error: could not obtain token." >&2
       return 1
     fi
   fi
 
   command claude "\$@"
 }
-# <<< dbx-fmapi-claude wrapper <<<
+# <<< ${CMD_NAME} wrapper <<<
 WRAPPER
 success "Wrapper written to ${RC_FILE}."
 
@@ -200,5 +303,6 @@ echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
 echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${DATABRICKS_HOST}${RESET}"
 echo -e "  ${DIM}Profile${RESET}    ${BOLD}${DATABRICKS_PROFILE}${RESET}"
 echo -e "  ${DIM}Model${RESET}      ${BOLD}${ANTHROPIC_MODEL}${RESET}"
+echo -e "  ${DIM}Command${RESET}    ${BOLD}${CMD_NAME}${RESET}"
 echo -e "  ${DIM}Settings${RESET}   ${BOLD}${SETTINGS_FILE}${RESET}"
-echo -e "\n  Run ${CYAN}${BOLD}source ${RC_FILE}${RESET} or open a ${BOLD}new terminal${RESET}, then run ${CYAN}${BOLD}dbx-fmapi-claude${RESET} to start.\n"
+echo -e "\n  Run ${CYAN}${BOLD}source ${RC_FILE}${RESET} or open a ${BOLD}new terminal${RESET}, then run ${CYAN}${BOLD}${CMD_NAME}${RESET} to start.\n"
