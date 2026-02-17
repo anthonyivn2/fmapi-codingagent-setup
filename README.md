@@ -12,7 +12,7 @@ Set up [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to run agai
 ## Quick Start
 
 ```bash
-bash setup_fmapi_cc.sh
+bash setup-fmapi-claudecode.sh
 ```
 
 The script will prompt you for:
@@ -102,7 +102,7 @@ If you use the plain `claude` command instead, it will still work as long as the
 
 ## Re-running the Script
 
-You can safely re-run `setup_fmapi_cc.sh` at any time to:
+You can safely re-run `setup-fmapi-claudecode.sh` at any time to:
 
 - Update the workspace URL, profile, or model
 - Refresh an expired token

@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-This repo contains a single bash setup script (`setup_fmapi_cc.sh`) that configures Claude Code to use Anthropic models served through Databricks Foundation Model API (FMAPI). There is no application code — just the script and documentation.
+This repo contains a single bash setup script (`setup-fmapi-claudecode.sh`) that configures Claude Code to use Anthropic models served through Databricks Foundation Model API (FMAPI). There is no application code — just the script and documentation.
 
 ## Repository Structure
 
 ```
-setup_fmapi_cc.sh   # Main setup script (bash)
+setup-fmapi-claudecode.sh   # Main setup script (bash)
 README.md           # User-facing documentation
 CLAUDE.md           # This file
 .gitignore          # Ignores .claude/settings.json and Python artifacts
@@ -15,7 +15,7 @@ CLAUDE.md           # This file
 
 ## Key Concepts
 
-- **`setup_fmapi_cc.sh`** — Interactive bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and adds a `dbx-fmapi-claude` shell wrapper to the user's RC file.
+- **`setup-fmapi-claudecode.sh`** — Interactive bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and adds a `dbx-fmapi-claude` shell wrapper to the user's RC file.
 - **`dbx-fmapi-claude`** — A shell function injected into `~/.zshrc` or `~/.bashrc` that wraps the `claude` command with automatic Databricks OAuth token refresh.
 - **`.claude/settings.json`** — Claude Code configuration file containing environment variables (`ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, etc.) that route requests through Databricks FMAPI.
 
@@ -33,7 +33,7 @@ CLAUDE.md           # This file
 
 There are no automated tests. To verify changes:
 
-1. Run `bash setup_fmapi_cc.sh` end-to-end with a real Databricks workspace.
+1. Run `bash setup-fmapi-claudecode.sh` end-to-end with a real Databricks workspace.
 2. Confirm `.claude/settings.json` is written correctly with `jq . .claude/settings.json`.
 3. Open a new terminal and run `dbx-fmapi-claude` to verify the wrapper works.
 4. Run the script a second time to confirm idempotency (wrapper is replaced, settings are merged).
