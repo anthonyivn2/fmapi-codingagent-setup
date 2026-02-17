@@ -105,6 +105,7 @@ DATABRICKS_HOST="${DATABRICKS_HOST%/}"
 
 read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name: ")" DATABRICKS_PROFILE
 [[ -z "$DATABRICKS_PROFILE" ]] && { error "Profile name is required."; exit 1; }
+[[ "$DATABRICKS_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]] || { error "Invalid profile name: '$DATABRICKS_PROFILE'. Use letters, numbers, hyphens, and underscores."; exit 1; }
 
 read -rp "$(echo -e "  ${CYAN}?${RESET} Model ${DIM}[databricks-claude-opus-4-6]${RESET}: ")" ANTHROPIC_MODEL
 ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-databricks-claude-opus-4-6}"
@@ -203,6 +204,16 @@ fi
 [[ -z "$OAUTH_TOKEN" ]] && { error "Failed to get OAuth access token."; exit 1; }
 success "OAuth session established."
 
+info "Revoking old FMAPI PATs ..."
+OLD_PAT_IDS=$(databricks tokens list --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
+  | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
+if [[ -n "$OLD_PAT_IDS" ]]; then
+  while IFS= read -r tid; do
+    [[ -n "$tid" ]] && databricks tokens delete "$tid" --profile "$DATABRICKS_PROFILE" 2>/dev/null || true
+  done <<< "$OLD_PAT_IDS"
+  success "Old PATs revoked."
+fi
+
 info "Creating PAT (lifetime: ${PAT_LIFETIME_LABEL}) ..."
 PAT_JSON=$(databricks tokens create \
   --lifetime-seconds "$PAT_LIFETIME_SECONDS" \
@@ -241,13 +252,16 @@ meta_json=$(jq -n \
   '{auth_method: $method, pat_expiry_epoch: $expiry, pat_lifetime_seconds: $lifetime}')
 
 if [[ -f "$SETTINGS_FILE" ]]; then
+  tmpfile=$(mktemp "${SETTINGS_FILE}.XXXXXX")
   jq --argjson new_env "$env_json" --argjson meta "$meta_json" \
     '.env = ((.env // {}) * $new_env) | ._fmapi_meta = $meta' \
-    "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
-  mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+    "$SETTINGS_FILE" > "$tmpfile"
+  chmod 600 "$tmpfile"
+  mv "$tmpfile" "$SETTINGS_FILE"
 else
   jq -n --argjson env "$env_json" --argjson meta "$meta_json" \
     '{"env": $env, "_fmapi_meta": $meta}' > "$SETTINGS_FILE"
+  chmod 600 "$SETTINGS_FILE"
 fi
 success "Settings written to ${SETTINGS_FILE}."
 
@@ -321,6 +335,13 @@ CMD_NAME_PLACEHOLDER() {
       databricks auth login --host "$host" --profile "$profile"
     fi
 
+    # Revoke old FMAPI PATs before creating new one
+    databricks tokens list --profile "$profile" --output json 2>/dev/null \
+      | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null \
+      | while IFS= read -r tid; do
+          [[ -n "$tid" ]] && databricks tokens delete "$tid" --profile "$profile" 2>/dev/null || true
+        done
+
     local pat_json new_token new_expiry
     pat_json=$(databricks tokens create \
       --lifetime-seconds "$lifetime" \
@@ -331,9 +352,11 @@ CMD_NAME_PLACEHOLDER() {
 
     if [[ -n "$new_token" ]]; then
       new_expiry=$(( $(date +%s) + lifetime ))
+      local tmpfile
+      tmpfile=$(mktemp "${sf}.XXXXXX")
       jq --arg tok "$new_token" --argjson exp "$new_expiry" \
         '.env.ANTHROPIC_AUTH_TOKEN = $tok | ._fmapi_meta.pat_expiry_epoch = $exp' \
-        "$sf" > "${sf}.tmp" && mv "${sf}.tmp" "$sf"
+        "$sf" > "$tmpfile" && chmod 600 "$tmpfile" && mv "$tmpfile" "$sf"
       echo "[CMD_NAME_PLACEHOLDER] PAT refreshed (expires: $(date -r "$new_expiry" '+%Y-%m-%d %H:%M %Z'))."
     else
       echo "[CMD_NAME_PLACEHOLDER] Error: could not create PAT." >&2
