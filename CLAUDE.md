@@ -23,9 +23,9 @@ CLAUDE.md                    # This file
 
 ## Key Concepts
 
-- **`setup-fmapi-claudecode.sh`** — Interactive bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and adds a shell wrapper to the user's RC file. Uses an interactive arrow-key selector for multi-choice prompts (command name, settings location).
-- **`fmapi-claude`** — The default shell function name injected into `~/.zshrc` or `~/.bashrc` that wraps the `claude` command with automatic Databricks OAuth token refresh. Users can choose to override `claude` directly or use a custom command name during setup.
-- **`.claude/settings.json`** — Claude Code configuration file containing environment variables (`ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, etc.) that route requests through Databricks FMAPI.
+- **`setup-fmapi-claudecode.sh`** — Interactive bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, creates a Personal Access Token (PAT), writes `.claude/settings.json`, and adds a shell wrapper to the user's RC file. Uses an interactive arrow-key selector for multi-choice prompts (command name, settings location, PAT lifetime).
+- **`fmapi-claude`** — The default shell function name injected into `~/.zshrc` or `~/.bashrc` that wraps the `claude` command with automatic Databricks PAT refresh. Users can choose to override `claude` directly or use a custom command name during setup.
+- **`.claude/settings.json`** — Claude Code configuration file containing environment variables (`ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, etc.) and `_fmapi_meta` (PAT expiry and lifetime) that route requests through Databricks FMAPI.
 
 ## Development Guidelines
 
@@ -36,7 +36,7 @@ CLAUDE.md                    # This file
 - The `select_option` function provides an interactive arrow-key selector for multi-choice prompts. It uses ANSI escape codes to redraw options in place and collapses to the selected item on confirmation. Reuse this pattern in future setup scripts.
 - Scripts use `set -euo pipefail` for strict error handling. Any new code must work under these constraints.
 - **Dependencies**: `brew`, `jq`, `curl`, `tput`, `databricks` CLI. Do not introduce additional dependencies without good reason.
-- **Never commit** `.claude/settings.json` or other files containing OAuth tokens.
+- **Never commit** `.claude/settings.json` or other files containing tokens (OAuth or PAT).
 - Use [ShellCheck](https://www.shellcheck.net/) conventions when editing scripts.
 
 ## Testing Changes

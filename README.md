@@ -36,6 +36,7 @@ The script will prompt you for:
 | **Model** | Text input | The model to use. Defaults to `databricks-claude-opus-4-6` |
 | **Command name** | Arrow-key selector | The shell command to invoke Claude Code with FMAPI (see [Command name options](#command-name-options) below) |
 | **Settings location** | Arrow-key selector | Where to write the `.claude/settings.json` file (current directory, home directory, or a custom path) |
+| **PAT lifetime** | Arrow-key selector | How long the Personal Access Token should last (1 day, 3 days, 5 days, or 7 days) |
 
 > The **Command name** and **Settings location** prompts use an interactive arrow-key selector &mdash; use the up/down arrow keys to navigate and Enter to confirm.
 
@@ -66,7 +67,7 @@ If you re-run the script and pick a different command name, the old wrapper is a
 
 #### 2. Authenticates with Databricks
 
-Attempts to retrieve an OAuth token using `databricks auth token --profile <profile>`. If no valid token exists, it triggers `databricks auth login` to start the OAuth flow in your browser, then retrieves the token.
+Establishes an OAuth session using `databricks auth token --profile <profile>`. If no valid session exists, it triggers `databricks auth login` to start the OAuth flow in your browser. Once authenticated, the script revokes any old FMAPI PATs and creates a new Personal Access Token (PAT) with the chosen lifetime. The PAT is used as the `ANTHROPIC_AUTH_TOKEN` for Claude Code.
 
 #### 3. Writes `.claude/settings.json`
 
@@ -76,7 +77,7 @@ Creates or merges environment variables into your Claude Code settings file at t
 |---|---|
 | `ANTHROPIC_MODEL` | Selected model (default: `databricks-claude-opus-4-6`) |
 | `ANTHROPIC_BASE_URL` | `<workspace-url>/serving-endpoints/anthropic` |
-| `ANTHROPIC_AUTH_TOKEN` | Your Databricks OAuth token |
+| `ANTHROPIC_AUTH_TOKEN` | Your Databricks Personal Access Token (PAT) |
 | `ANTHROPIC_DEFAULT_OPUS_MODEL` | `databricks-claude-opus-4-6` |
 | `ANTHROPIC_DEFAULT_SONNET_MODEL` | `databricks-claude-sonnet-4-5` |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `databricks-claude-haiku-4-5` |
@@ -113,13 +114,13 @@ fmapi-claude --help
 
 Each time you run the wrapper command:
 
-1. Reads the current token from your `settings.json`.
-2. Makes a lightweight API call to your workspace to check if the token is still valid.
-3. If expired, attempts to get a new token from `databricks auth token --profile <profile>`.
-4. If that also fails (e.g. the refresh token expired), opens the OAuth login flow via `databricks auth login`.
-5. Writes the new token back into `settings.json` and launches Claude Code.
+1. Reads the PAT expiry time stored in `settings.json` (no network call needed).
+2. If the PAT hasn't expired, launches Claude Code immediately.
+3. If expired, ensures the OAuth session is still valid (triggers `databricks auth login` if needed).
+4. Revokes any old FMAPI PATs from the workspace.
+5. Creates a new PAT with the configured lifetime and writes it back into `settings.json`.
 
-If you use the plain `claude` command instead, it will still work as long as the token in `settings.json` hasn't expired &mdash; but it won't auto-refresh.
+If you use the plain `claude` command instead, it will still work as long as the PAT in `settings.json` hasn't expired &mdash; but it won't auto-refresh.
 
 ### Available Models
 
@@ -153,7 +154,7 @@ Ensure the Databricks CLI profile name matches what you used during setup. Check
 Run `source ~/.zshrc` (or `source ~/.bashrc`) or open a new terminal after running the setup script.
 
 **Claude Code returns authentication errors**
-Your OAuth token may have fully expired. Run `fmapi-claude` to trigger a refresh, or re-run the setup script.
+Your PAT may have expired. Run `fmapi-claude` to trigger automatic PAT refresh, or re-run the setup script.
 
 ## OpenAI Codex
 
