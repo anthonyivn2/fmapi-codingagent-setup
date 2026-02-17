@@ -12,23 +12,38 @@ Set up [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to run agai
 ## Quick Start
 
 ```bash
-bash setup-fmapi-claudecode.sh
+lets bash setup-fmapi-claudecode.sh
 ```
 
 The script will prompt you for:
 
-| Prompt | Description |
-|---|---|
-| **Workspace URL** | Your Databricks workspace URL (e.g. `https://my-workspace.cloud.databricks.com`) |
-| **CLI profile name** | Name for the Databricks CLI authentication profile (e.g. `my-profile`) |
-| **Model** | The model to use. Defaults to `databricks-claude-opus-4-6` |
-| **Settings location** | Where to write the `.claude/settings.json` file (current directory, home directory, or a custom path) |
+| Prompt | Type | Description |
+|---|---|---|
+| **Workspace URL** | Text input | Your Databricks workspace URL (e.g. `https://my-workspace.cloud.databricks.com`) |
+| **CLI profile name** | Text input | Name for the Databricks CLI authentication profile (e.g. `my-profile`) |
+| **Model** | Text input | The model to use. Defaults to `databricks-claude-opus-4-6` |
+| **Command name** | Arrow-key selector | The shell command to invoke Claude with FMAPI (see [Command name options](#command-name-options) below) |
+| **Settings location** | Arrow-key selector | Where to write the `.claude/settings.json` file (current directory, home directory, or a custom path) |
+
+> The **Command name** and **Settings location** prompts use an interactive arrow-key selector &mdash; use the up/down arrow keys to navigate and Enter to confirm.
 
 Once complete, open a new terminal (or `source ~/.zshrc`) and run:
 
 ```bash
-dbx-fmapi-claude
+fmapi-claude   # default, or whatever command name you chose
 ```
+
+### Command name options
+
+During setup you can choose what command to use:
+
+| Option | Description |
+|---|---|
+| `fmapi-claude` | **Default.** Adds a separate command alongside the original `claude` command. |
+| `claude` | Overrides the default `claude` command so every invocation goes through FMAPI with automatic token refresh. The underlying `claude` binary is still called via the wrapper. |
+| Custom name | Use any name you like (e.g. `dbx-claude`, `my-claude`). Must start with a letter or underscore and contain only letters, numbers, hyphens, and underscores. |
+
+If you re-run the script and pick a different command name, the old wrapper is automatically removed.
 
 ## What the Script Does
 
@@ -58,31 +73,33 @@ Creates or merges environment variables into your Claude Code settings file at t
 
 If the settings file already exists, the script merges the new `env` values into it without overwriting other settings.
 
-### 4. Adds the `dbx-fmapi-claude` shell wrapper
+### 4. Adds the `fmapi-claude` shell wrapper
 
 Appends a shell function to your `~/.zshrc` (or `~/.bashrc`) that wraps the `claude` command with automatic token refresh logic.
 
-## Using `dbx-fmapi-claude`
+## Using the wrapper command
 
-`dbx-fmapi-claude` is a drop-in replacement for the `claude` command. It accepts all the same arguments and flags &mdash; the only difference is that it checks your Databricks token before each invocation and refreshes it if it has expired.
+The wrapper (default: `fmapi-claude`, or whatever name you chose during setup) is a drop-in replacement for the `claude` command. It accepts all the same arguments and flags &mdash; the only difference is that it checks your Databricks token before each invocation and refreshes it if it has expired.
 
 ```bash
 # Start an interactive session
-dbx-fmapi-claude
+fmapi-claude
 
 # Run a one-shot prompt
-dbx-fmapi-claude -p "explain this codebase"
+fmapi-claude -p "explain this codebase"
 
 # Resume a conversation
-dbx-fmapi-claude --continue
+fmapi-claude --continue
 
 # Any other claude flags work as usual
-dbx-fmapi-claude --help
+fmapi-claude --help
 ```
+
+> **Tip:** If you chose `claude` as the command name, just replace `fmapi-claude` with `claude` in the examples above &mdash; every `claude` invocation will automatically refresh tokens.
 
 ### How token refresh works
 
-Each time you run `dbx-fmapi-claude`:
+Each time you run the wrapper command:
 
 1. Reads the current token from your `settings.json`.
 2. Makes a lightweight API call to your workspace to check if the token is still valid.
@@ -118,8 +135,8 @@ Provide the full URL including the scheme, e.g. `https://my-workspace.cloud.data
 **Token refresh fails silently**
 Ensure the Databricks CLI profile name matches what you used during setup. Check with `databricks auth env --profile <profile>`.
 
-**`dbx-fmapi-claude: command not found`**
+**`fmapi-claude: command not found`**
 Run `source ~/.zshrc` (or `source ~/.bashrc`) or open a new terminal after running the setup script.
 
 **Claude Code returns authentication errors**
-Your OAuth token may have fully expired. Run `dbx-fmapi-claude` to trigger a refresh, or re-run the setup script.
+Your OAuth token may have fully expired. Run `fmapi-claude` to trigger a refresh, or re-run the setup script.
