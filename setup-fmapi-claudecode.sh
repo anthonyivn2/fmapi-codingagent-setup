@@ -149,6 +149,20 @@ case "$SETTINGS_CHOICE" in
     ;;
 esac
 
+select_option "PAT lifetime" \
+  "1 day|default" \
+  "3 days|" \
+  "5 days|" \
+  "7 days|"
+PAT_LIFE_CHOICE="$SELECT_RESULT"
+
+case "$PAT_LIFE_CHOICE" in
+  1) PAT_LIFETIME_SECONDS=86400;  PAT_LIFETIME_LABEL="1 day" ;;
+  2) PAT_LIFETIME_SECONDS=259200; PAT_LIFETIME_LABEL="3 days" ;;
+  3) PAT_LIFETIME_SECONDS=432000; PAT_LIFETIME_LABEL="5 days" ;;
+  4) PAT_LIFETIME_SECONDS=604800; PAT_LIFETIME_LABEL="7 days" ;;
+esac
+
 SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
 
 # ── Install dependencies ─────────────────────────────────────────────────────
@@ -173,20 +187,32 @@ fi
 # ── Authenticate ──────────────────────────────────────────────────────────────
 echo -e "\n${BOLD}Authenticating${RESET}"
 
-get_token() {
+get_oauth_token() {
   databricks auth token --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
     | jq -r '.access_token // empty'
 }
 
-ANTHROPIC_AUTH_TOKEN=$(get_token) || true
-if [[ -z "$ANTHROPIC_AUTH_TOKEN" ]]; then
+# OAuth login is required (PAT creation needs an active session)
+OAUTH_TOKEN=$(get_oauth_token) || true
+if [[ -z "$OAUTH_TOKEN" ]]; then
   info "Logging in to ${DATABRICKS_HOST} ..."
   databricks auth login --host "$DATABRICKS_HOST" --profile "$DATABRICKS_PROFILE"
-  ANTHROPIC_AUTH_TOKEN=$(get_token)
+  OAUTH_TOKEN=$(get_oauth_token)
 fi
 
-[[ -z "$ANTHROPIC_AUTH_TOKEN" ]] && { error "Failed to get access token."; exit 1; }
-success "Authenticated."
+[[ -z "$OAUTH_TOKEN" ]] && { error "Failed to get OAuth access token."; exit 1; }
+success "OAuth session established."
+
+info "Creating PAT (lifetime: ${PAT_LIFETIME_LABEL}) ..."
+PAT_JSON=$(databricks tokens create \
+  --lifetime-seconds "$PAT_LIFETIME_SECONDS" \
+  --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
+  --profile "$DATABRICKS_PROFILE" \
+  --output json)
+ANTHROPIC_AUTH_TOKEN=$(echo "$PAT_JSON" | jq -r '.token_value // empty')
+[[ -z "$ANTHROPIC_AUTH_TOKEN" ]] && { error "Failed to create PAT."; exit 1; }
+PAT_EXPIRY_EPOCH=$(( $(date +%s) + PAT_LIFETIME_SECONDS ))
+success "PAT created (expires: $(date -r "$PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))."
 
 # ── Write .claude/settings.json ──────────────────────────────────────────────
 echo -e "\n${BOLD}Writing settings${RESET}"
@@ -208,11 +234,20 @@ env_json=$(jq -n \
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
   }')
 
+meta_json=$(jq -n \
+  --arg method "pat" \
+  --argjson expiry "$PAT_EXPIRY_EPOCH" \
+  --argjson lifetime "$PAT_LIFETIME_SECONDS" \
+  '{auth_method: $method, pat_expiry_epoch: $expiry, pat_lifetime_seconds: $lifetime}')
+
 if [[ -f "$SETTINGS_FILE" ]]; then
-  jq --argjson new_env "$env_json" '.env = ((.env // {}) * $new_env)' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
+  jq --argjson new_env "$env_json" --argjson meta "$meta_json" \
+    '.env = ((.env // {}) * $new_env) | ._fmapi_meta = $meta' \
+    "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
   mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
 else
-  jq -n --argjson env "$env_json" '{"env": $env}' > "$SETTINGS_FILE"
+  jq -n --argjson env "$env_json" --argjson meta "$meta_json" \
+    '{"env": $env, "_fmapi_meta": $meta}' > "$SETTINGS_FILE"
 fi
 success "Settings written to ${SETTINGS_FILE}."
 
@@ -257,45 +292,62 @@ else
   info "Adding wrapper to ${RC_FILE} ..."
 fi
 
-cat >> "$RC_FILE" << WRAPPER
+cat >> "$RC_FILE" << 'WRAPPER'
 
-# >>> ${CMD_NAME} wrapper >>>
-${CMD_NAME}() {
-  local sf="${SETTINGS_FILE}"
-  [[ ! -f "\$sf" ]] && { command claude "\$@"; return; }
+# >>> CMD_NAME_PLACEHOLDER wrapper >>>
+CMD_NAME_PLACEHOLDER() {
+  local sf="SETTINGS_FILE_PLACEHOLDER"
+  [[ ! -f "$sf" ]] && { command claude "$@"; return; }
 
-  local token host profile="${DATABRICKS_PROFILE}"
-  token=\$(jq -r '.env.ANTHROPIC_AUTH_TOKEN // empty' "\$sf")
-  host=\$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "\$sf")
-  host="\${host%/serving-endpoints/anthropic}"
+  local token host profile="PROFILE_PLACEHOLDER"
+  token=$(jq -r '.env.ANTHROPIC_AUTH_TOKEN // empty' "$sf")
+  host=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$sf")
+  host="${host%/serving-endpoints/anthropic}"
 
-  # Check if token is still valid
-  if [[ -z "\$token" ]] || \\
-     [[ "\$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer \$token" "\$host/api/2.0/token/list" 2>/dev/null)" != "200" ]]; then
+  # Check PAT expiry via local clock (no HTTP call)
+  local expiry lifetime now
+  expiry=$(jq -r '._fmapi_meta.pat_expiry_epoch // 0' "$sf")
+  lifetime=$(jq -r '._fmapi_meta.pat_lifetime_seconds // 86400' "$sf")
+  now=$(date +%s)
 
-    echo "[${CMD_NAME}] Refreshing token ..."
-    local new_token=""
-    new_token=\$(databricks auth token --profile "\$profile" --output json 2>/dev/null | jq -r '.access_token // empty') || true
+  if [[ -z "$token" ]] || (( now >= expiry )); then
+    echo "[CMD_NAME_PLACEHOLDER] PAT expired, creating new one ..."
 
-    if [[ -z "\$new_token" ]]; then
-      echo "[${CMD_NAME}] OAuth login required ..."
-      databricks auth login --host "\$host" --profile "\$profile"
-      new_token=\$(databricks auth token --profile "\$profile" --output json 2>/dev/null | jq -r '.access_token // empty') || true
+    # Ensure OAuth session is valid for PAT creation
+    local oauth_tok=""
+    oauth_tok=$(databricks auth token --profile "$profile" --output json 2>/dev/null | jq -r '.access_token // empty') || true
+    if [[ -z "$oauth_tok" ]]; then
+      echo "[CMD_NAME_PLACEHOLDER] OAuth login required ..."
+      databricks auth login --host "$host" --profile "$profile"
     fi
 
-    if [[ -n "\$new_token" ]]; then
-      jq --arg tok "\$new_token" '.env.ANTHROPIC_AUTH_TOKEN = \$tok' "\$sf" > "\${sf}.tmp" && mv "\${sf}.tmp" "\$sf"
-      echo "[${CMD_NAME}] Token refreshed."
+    local pat_json new_token new_expiry
+    pat_json=$(databricks tokens create \
+      --lifetime-seconds "$lifetime" \
+      --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
+      --profile "$profile" \
+      --output json)
+    new_token=$(echo "$pat_json" | jq -r '.token_value // empty')
+
+    if [[ -n "$new_token" ]]; then
+      new_expiry=$(( $(date +%s) + lifetime ))
+      jq --arg tok "$new_token" --argjson exp "$new_expiry" \
+        '.env.ANTHROPIC_AUTH_TOKEN = $tok | ._fmapi_meta.pat_expiry_epoch = $exp' \
+        "$sf" > "${sf}.tmp" && mv "${sf}.tmp" "$sf"
+      echo "[CMD_NAME_PLACEHOLDER] PAT refreshed (expires: $(date -r "$new_expiry" '+%Y-%m-%d %H:%M %Z'))."
     else
-      echo "[${CMD_NAME}] Error: could not obtain token." >&2
+      echo "[CMD_NAME_PLACEHOLDER] Error: could not create PAT." >&2
       return 1
     fi
   fi
 
-  command claude "\$@"
+  command claude "$@"
 }
-# <<< ${CMD_NAME} wrapper <<<
+# <<< CMD_NAME_PLACEHOLDER wrapper <<<
 WRAPPER
+
+# Replace placeholders with actual values
+sed -i '' "s|CMD_NAME_PLACEHOLDER|${CMD_NAME}|g; s|SETTINGS_FILE_PLACEHOLDER|${SETTINGS_FILE}|g; s|PROFILE_PLACEHOLDER|${DATABRICKS_PROFILE}|g" "$RC_FILE"
 success "Wrapper written to ${RC_FILE}."
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -303,6 +355,7 @@ echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
 echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${DATABRICKS_HOST}${RESET}"
 echo -e "  ${DIM}Profile${RESET}    ${BOLD}${DATABRICKS_PROFILE}${RESET}"
 echo -e "  ${DIM}Model${RESET}      ${BOLD}${ANTHROPIC_MODEL}${RESET}"
+echo -e "  ${DIM}Auth${RESET}       ${BOLD}PAT (${PAT_LIFETIME_LABEL}, expires $(date -r "$PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))${RESET}"
 echo -e "  ${DIM}Command${RESET}    ${BOLD}${CMD_NAME}${RESET}"
 echo -e "  ${DIM}Settings${RESET}   ${BOLD}${SETTINGS_FILE}${RESET}"
 echo -e "\n  Run ${CYAN}${BOLD}source ${RC_FILE}${RESET} or open a ${BOLD}new terminal${RESET}, then run ${CYAN}${BOLD}${CMD_NAME}${RESET} to start.\n"
