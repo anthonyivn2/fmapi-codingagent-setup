@@ -75,37 +75,23 @@ Creates or merges environment variables into your Claude Code settings file at t
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `env` | `1` |
 | `CLAUDE_CODE_API_KEY_HELPER_TTL_MS` | `env` | TTL for token caching (half of PAT lifetime, max 1 hour) |
 
-If the settings file already exists, the script merges the new values into it without overwriting other settings. Old-style `ANTHROPIC_AUTH_TOKEN` and `_fmapi_meta` keys are removed during migration.
+If the settings file already exists, the script merges the new values into it without overwriting other settings.
 
 #### 4. Creates an API key helper script
 
-Writes `fmapi-key-helper.sh` alongside `settings.json` with `chmod 700` (owner-only). This script is invoked automatically by Claude Code via the [`apiKeyHelper`](https://docs.anthropic.com/en/docs/claude-code/settings#available-settings) setting to obtain auth tokens on demand. The helper manages the full PAT lifecycle without requiring a shell wrapper.
+Writes `fmapi-key-helper.sh` alongside `settings.json`. This script is invoked automatically by Claude Code via the [`apiKeyHelper`](https://docs.anthropic.com/en/docs/claude-code/settings#available-settings) setting to obtain and refresh auth tokens on demand.
 
 #### 5. Seeds the PAT cache
 
-The initial PAT created during setup is written atomically to `.fmapi-pat-cache` (via `mktemp` + `jq` + `mv`) so that the first `claude` invocation works immediately without needing to create a new token.
+The initial PAT created during setup is cached locally so that the first `claude` invocation works immediately without needing to create a new token.
 
 ### Security
 
-The script applies defense-in-depth to protect PAT tokens at rest:
+All generated files (helper scripts, token caches, settings) are restricted to owner-only permissions. Tokens are cached locally and refreshed automatically before expiration.
 
-- **`umask 077`** &mdash; Set at the top of both the setup script and the helper script. All newly created files default to owner-only permissions (`600` for files, `700` for directories), even if `chmod` never runs due to an interrupt.
-- **Trap-based temp file cleanup** &mdash; Both scripts register cleanup handlers (`trap ... EXIT`) that remove orphaned temp files on exit, error, or interrupt (Ctrl+C). This prevents PAT tokens from being left in world-readable temp files if the script is killed mid-operation.
-- **Atomic writes with `jq`** &mdash; All JSON files containing tokens are written using `mktemp` + `jq -n` + `chmod 600` + `mv`. This avoids both non-atomic writes (where another process could read a partial file) and `printf`-based JSON construction (where special characters in tokens could break the JSON silently).
-- **Owner-only helper** &mdash; The helper script uses `chmod 700` instead of `755`, restricting read and execute access to the owning user only.
+### How Token Management Works
 
-### How token management works
-
-Claude Code uses the `apiKeyHelper` setting to automatically obtain auth tokens:
-
-1. Claude Code invokes `fmapi-key-helper.sh` when it needs an API key.
-2. The helper checks `.fmapi-pat-cache` for a cached token with at least 5 minutes of remaining validity.
-3. If the cached token is still valid, it is returned immediately (no network call).
-4. If expired, the helper ensures the OAuth session is still valid (prints re-auth instructions if needed).
-5. Revokes any old FMAPI PATs from the workspace.
-6. Creates a new PAT with the configured lifetime, writes it to the cache atomically, and returns it.
-
-The `CLAUDE_CODE_API_KEY_HELPER_TTL_MS` setting controls how often Claude Code re-invokes the helper (default: every hour or half the PAT lifetime, whichever is shorter).
+Claude Code automatically obtains and refreshes auth tokens via the helper script. Cached tokens are reused when valid; expired tokens are replaced transparently. If the underlying OAuth session expires, the helper will prompt you to re-authenticate.
 
 ### Available Models
 
@@ -128,11 +114,10 @@ bash setup-fmapi-claudecode.sh --uninstall
 
 The uninstall process:
 
-1. **Discovers artifacts** &mdash; Finds helper scripts, cache files, and settings files with FMAPI keys. Also detects legacy shell wrappers in `~/.zshrc` and `~/.bashrc` from older versions.
+1. **Discovers artifacts** &mdash; Finds helper scripts, cache files, and settings files with FMAPI keys.
 2. **Deletes helper script and cache** &mdash; Removes `fmapi-key-helper.sh` and `.fmapi-pat-cache`.
 3. **Cleans settings files** &mdash; Removes FMAPI-specific keys (`apiKeyHelper`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, etc.) from `.claude/settings.json`. If no other settings remain, the file is deleted. Non-FMAPI settings are preserved.
-4. **Removes legacy wrappers** &mdash; Cleans up any old-style shell wrapper blocks from RC files.
-5. **Optionally revokes PATs** &mdash; With a separate confirmation prompt, revokes any Databricks PATs whose comment starts with "Claude Code FMAPI". If you decline, the tokens will expire on their own.
+4. **Optionally revokes PATs** &mdash; With a separate confirmation prompt, revokes any FMAPI PATs from the workspace. If you decline, the tokens will expire on their own.
 
 Re-running `--uninstall` when nothing is installed is safe and will print "Nothing to uninstall."
 
@@ -145,22 +130,6 @@ You can safely re-run `setup-fmapi-claudecode.sh` at any time to:
 - Repair a missing or corrupted settings file or helper script
 
 The script will overwrite the existing helper script and merge settings without duplication.
-
-### Upgrading from Shell Wrapper
-
-If you previously used a version of this script that injected a shell wrapper into `~/.zshrc` or `~/.bashrc`, simply re-run the setup script:
-
-```bash
-bash setup-fmapi-claudecode.sh
-```
-
-The script will automatically:
-
-1. Remove the old shell wrapper block from your RC file
-2. Create the new `apiKeyHelper`-based setup
-3. Migrate your settings (removing old `ANTHROPIC_AUTH_TOKEN` and `_fmapi_meta` keys)
-
-You no longer need to `source ~/.zshrc` or use a custom command name &mdash; just run `claude` directly.
 
 ### Troubleshooting
 
