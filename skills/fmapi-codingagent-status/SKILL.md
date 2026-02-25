@@ -1,6 +1,6 @@
 ---
 name: fmapi-codingagent-status
-description: Check FMAPI configuration health — workspace, PAT status, OAuth session, and model settings
+description: Check FMAPI configuration health — OAuth session, workspace, and model settings
 user_invocable: true
 ---
 
@@ -20,8 +20,7 @@ bash "<install-path>/setup-fmapi-claudecode.sh" --status
 
 3. Present the output to the user. The status dashboard shows:
 
-   - **Green (healthy)**: PAT has more than 2 hours remaining, OAuth session is active. No action needed.
-   - **Yellow (warning)**: PAT has less than 2 hours remaining. Suggest running `/fmapi-codingagent-refresh` to rotate the token.
-   - **Red (expired/missing)**: PAT is expired or no configuration found. Suggest running `/fmapi-codingagent-setup` to reconfigure, or `/fmapi-codingagent-refresh` if only the PAT expired.
+   - **Green (active)**: OAuth session is valid. No action needed.
+   - **Red (expired)**: OAuth session has expired. Suggest running `/fmapi-codingagent-reauth` to re-authenticate, or `/fmapi-codingagent-setup` to reconfigure.
 
 4. If the command exits with an error indicating no config was found, inform the user they need to run `/fmapi-codingagent-setup` first.

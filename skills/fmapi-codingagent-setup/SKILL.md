@@ -43,7 +43,6 @@ bash "<install-path>/setup-fmapi-claudecode.sh" \
 | `--sonnet MODEL` | Sonnet model | `--sonnet databricks-claude-sonnet-4-6` |
 | `--haiku MODEL` | Haiku model | `--haiku databricks-claude-haiku-4-5` |
 | `--settings-location PATH` | Where to write settings (`home`, `cwd`, or a custom path) | `--settings-location home` |
-| `--pat-lifetime DAYS` | PAT lifetime in days (1, 3, 5, or 7) | `--pat-lifetime 1` |
 
 When `--host` and `--profile` are both provided along with all other flags, the script runs non-interactively. Any missing flags will be prompted interactively, with existing config values shown as defaults.
 
@@ -52,6 +51,6 @@ When `--host` and `--profile` are both provided along with all other flags, the 
 | Flag | Description |
 |---|---|
 | `--status` | Check FMAPI configuration health (use `/fmapi-codingagent-status` instead) |
-| `--refresh` | Rotate PAT token (use `/fmapi-codingagent-refresh` instead) |
+| `--reauth` | Re-authenticate OAuth session (use `/fmapi-codingagent-reauth` instead) |
 | `--uninstall` | Remove all FMAPI artifacts |
 | `-h`, `--help` | Show help message |

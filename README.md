@@ -38,9 +38,8 @@ The script will prompt you for:
 | **Sonnet model** | Text input | The Sonnet model for lighter tasks. Defaults to `databricks-claude-sonnet-4-6` |
 | **Haiku model** | Text input | The Haiku model for fast, low-cost tasks. Defaults to `databricks-claude-haiku-4-5` |
 | **Settings location** | Arrow-key selector | Where to write the `.claude/settings.json` file (home directory, current directory, or a custom path) |
-| **PAT lifetime** | Arrow-key selector | How long the Personal Access Token should last (1 day, 3 days, 5 days, or 7 days) |
 
-> The **Settings location** and **PAT lifetime** prompts use an interactive arrow-key selector &mdash; use the up/down arrow keys to navigate and Enter to confirm.
+> The **Settings location** prompt uses an interactive arrow-key selector &mdash; use the up/down arrow keys to navigate and Enter to confirm.
 
 When re-running the script, existing configuration values are shown as defaults in `[brackets]` &mdash; press Enter to keep the current value.
 
@@ -68,8 +67,8 @@ The setup script automatically registers this repo as a Claude Code plugin, maki
 
 | Skill | Description |
 |---|---|
-| `/fmapi-codingagent-status` | Check FMAPI configuration health &mdash; workspace, PAT status, OAuth session, and model settings |
-| `/fmapi-codingagent-refresh` | Rotate the PAT token non-interactively (revoke old tokens and create a fresh one) |
+| `/fmapi-codingagent-status` | Check FMAPI configuration health &mdash; OAuth session, workspace, and model settings |
+| `/fmapi-codingagent-reauth` | Re-authenticate the Databricks OAuth session |
 | `/fmapi-codingagent-setup` | Run full FMAPI setup (interactive or non-interactive with CLI flags) |
 
 These skills allow you to manage your FMAPI configuration without leaving Claude Code.
@@ -85,19 +84,18 @@ bash setup-fmapi-claudecode.sh --status
 The dashboard shows:
 
 - **Configuration** &mdash; Workspace URL, profile, and model names
-- **PAT Health** &mdash; Green (>2h remaining), yellow (<2h), or red (expired)
-- **OAuth Health** &mdash; Whether the Databricks OAuth session is active
-- **File locations** &mdash; Paths to settings, helper, and cache files
+- **Auth** &mdash; Whether the Databricks OAuth session is active or expired
+- **File locations** &mdash; Paths to settings and helper files
 
-### Token Refresh
+### Re-authentication
 
-Rotate your PAT token without re-running the full setup:
+Re-authenticate your Databricks OAuth session:
 
 ```bash
-bash setup-fmapi-claudecode.sh --refresh
+bash setup-fmapi-claudecode.sh --reauth
 ```
 
-This is non-interactive: it discovers the existing config, revokes old FMAPI PATs, creates a new one with the same lifetime, and updates the cache. If the OAuth session has expired, it prints instructions for re-authentication.
+This triggers `databricks auth login` for your configured profile and verifies the new session is valid.
 
 ### CLI Reference
 
@@ -106,8 +104,8 @@ Usage: bash setup-fmapi-claudecode.sh [OPTIONS]
 
 Commands:
   --status              Show FMAPI configuration health dashboard
-  --refresh             Rotate PAT token (non-interactive)
-  --uninstall           Remove FMAPI helper scripts, settings, and optionally revoke PATs
+  --reauth              Re-authenticate Databricks OAuth session
+  --uninstall           Remove FMAPI helper scripts and settings
   -h, --help            Show this help message
 
 Setup options (skip interactive prompts):
@@ -119,7 +117,6 @@ Setup options (skip interactive prompts):
   --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
   --settings-location PATH
                         Where to write settings: "home", "cwd", or a custom path
-  --pat-lifetime DAYS   PAT lifetime in days: 1, 3, 5, or 7
 ```
 
 ### What the Script Does
@@ -131,7 +128,7 @@ Setup options (skip interactive prompts):
 
 #### 2. Authenticates with Databricks
 
-Establishes an OAuth session using `databricks auth token --profile <profile>`. If no valid session exists, it triggers `databricks auth login` to start the OAuth flow in your browser. Once authenticated, the script revokes any old FMAPI PATs and creates a new Personal Access Token (PAT) with the chosen lifetime.
+Establishes an OAuth session using `databricks auth token --profile <profile>`. If no valid session exists, it triggers `databricks auth login` to start the OAuth flow in your browser. Any legacy FMAPI PATs from prior installations are automatically cleaned up.
 
 #### 3. Writes `.claude/settings.json`
 
@@ -139,7 +136,7 @@ Creates or merges environment variables into your Claude Code settings file at t
 
 | Setting | Location | Value |
 |---|---|---|
-| `apiKeyHelper` | Top-level | Path to `fmapi-key-helper.sh` (auto-generates auth tokens) |
+| `apiKeyHelper` | Top-level | Path to `fmapi-key-helper.sh` (obtains OAuth tokens on demand) |
 | `ANTHROPIC_MODEL` | `env` | Selected model (default: `databricks-claude-opus-4-6`) |
 | `ANTHROPIC_BASE_URL` | `env` | `<workspace-url>/serving-endpoints/anthropic` |
 | `ANTHROPIC_DEFAULT_OPUS_MODEL` | `env` | Selected Opus model (default: `databricks-claude-opus-4-6`) |
@@ -147,25 +144,21 @@ Creates or merges environment variables into your Claude Code settings file at t
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `env` | Selected Haiku model (default: `databricks-claude-haiku-4-5`) |
 | `ANTHROPIC_CUSTOM_HEADERS` | `env` | `x-databricks-use-coding-agent-mode: true` |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `env` | `1` |
-| `CLAUDE_CODE_API_KEY_HELPER_TTL_MS` | `env` | TTL for token caching (half of PAT lifetime, max 1 hour) |
+| `CLAUDE_CODE_API_KEY_HELPER_TTL_MS` | `env` | `3000000` (50 minutes &mdash; tokens refreshed before 1-hour OAuth expiry) |
 
 If the settings file already exists, the script merges the new values into it without overwriting other settings.
 
 #### 4. Creates an API key helper script
 
-Writes `fmapi-key-helper.sh` alongside `settings.json`. This script is invoked automatically by Claude Code via the [`apiKeyHelper`](https://docs.anthropic.com/en/docs/claude-code/settings#available-settings) setting to obtain and refresh auth tokens on demand.
-
-#### 5. Seeds the PAT cache
-
-The initial PAT created during setup is cached locally so that the first `claude` invocation works immediately without needing to create a new token.
+Writes `fmapi-key-helper.sh` alongside `settings.json`. This script is invoked automatically by Claude Code via the [`apiKeyHelper`](https://docs.anthropic.com/en/docs/claude-code/settings#available-settings) setting to obtain OAuth access tokens on demand. The Databricks CLI handles token refresh transparently using stored refresh tokens.
 
 ### Security
 
-All generated files (helper scripts, token caches, settings) are restricted to owner-only permissions. Tokens are cached locally and refreshed automatically before expiration.
+The generated helper script and settings file are restricted to owner-only permissions. OAuth tokens are obtained on demand from the Databricks CLI and are not cached in any additional files.
 
 ### How Token Management Works
 
-Claude Code automatically obtains and refreshes auth tokens via the helper script. Cached tokens are reused when valid; expired tokens are replaced transparently. If the underlying OAuth session expires, the helper will prompt you to re-authenticate.
+Claude Code invokes the helper script every 50 minutes (configurable via `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`). The helper calls `databricks auth token` which returns the current OAuth access token, automatically refreshing it if needed using the stored refresh token. If the refresh token has expired (due to extended inactivity), the helper falls back to `databricks auth login` to trigger browser-based re-authentication.
 
 ### Available Models
 
@@ -188,11 +181,10 @@ bash setup-fmapi-claudecode.sh --uninstall
 
 The uninstall process:
 
-1. **Discovers artifacts** &mdash; Finds helper scripts, cache files, and settings files with FMAPI keys.
-2. **Deletes helper script and cache** &mdash; Removes `fmapi-key-helper.sh` and `.fmapi-pat-cache`.
+1. **Discovers artifacts** &mdash; Finds helper scripts and settings files with FMAPI keys.
+2. **Deletes helper script** &mdash; Removes `fmapi-key-helper.sh` and any legacy cache files.
 3. **Cleans settings files** &mdash; Removes FMAPI-specific keys (`apiKeyHelper`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, etc.) from `.claude/settings.json`. If no other settings remain, the file is deleted. Non-FMAPI settings are preserved.
-4. **Optionally revokes PATs** &mdash; With a separate confirmation prompt, revokes any FMAPI PATs from the workspace. If you decline, the tokens will expire on their own.
-5. **Removes plugin registration** &mdash; Deregisters the plugin from `~/.claude/plugins/installed_plugins.json`.
+4. **Removes plugin registration** &mdash; Deregisters the plugin from `~/.claude/plugins/installed_plugins.json`.
 
 Re-running `--uninstall` when nothing is installed is safe and will print "Nothing to uninstall."
 
@@ -201,7 +193,6 @@ Re-running `--uninstall` when nothing is installed is safe and will print "Nothi
 You can safely re-run `setup-fmapi-claudecode.sh` at any time to:
 
 - Update the workspace URL, profile, or models (Opus, Sonnet, Haiku)
-- Refresh an expired token
 - Repair a missing or corrupted settings file or helper script
 
 When re-running, existing configuration values are discovered from the current settings and shown as defaults. Press Enter to keep any current value, or type a new value to change it.
@@ -213,14 +204,11 @@ The script will overwrite the existing helper script and merge settings without 
 **"Workspace URL must start with https://"**
 Provide the full URL including the scheme, e.g. `https://my-workspace.cloud.databricks.com`.
 
-**Token refresh fails silently**
-Ensure the Databricks CLI profile name matches what you used during setup. Check with `databricks auth env --profile <profile>`.
-
 **"apiKeyHelper failed" or authentication errors**
-Run the helper script manually to diagnose: `sh ~/.claude/fmapi-key-helper.sh`. If it prints an OAuth error, re-authenticate with `databricks auth login --host <workspace-url> --profile <profile>`.
+Run the helper script manually to diagnose: `sh ~/.claude/fmapi-key-helper.sh`. If it prints an OAuth error, re-authenticate with `databricks auth login --host <workspace-url> --profile <profile>`, or use `/fmapi-codingagent-reauth` inside Claude Code.
 
 **Claude Code returns authentication errors**
-Your PAT may have expired and the helper may need a valid OAuth session. Run `databricks auth login --host <workspace-url> --profile <profile>` to refresh the OAuth session, then retry `claude`.
+Your OAuth session may have expired. Run `databricks auth login --host <workspace-url> --profile <profile>` to refresh the session, then retry `claude`.
 
 ## OpenAI Codex
 

@@ -113,10 +113,9 @@ array_contains() {
 # Sets CFG_* variables for use by callers.
 discover_config() {
   CFG_FOUND=false
-  CFG_HOST="" CFG_PROFILE="" CFG_LIFETIME="" CFG_CACHE_FILE=""
+  CFG_HOST="" CFG_PROFILE=""
   CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
   CFG_SETTINGS_FILE="" CFG_HELPER_FILE=""
-  CFG_PAT_EXPIRY_EPOCH="" CFG_PAT_TOKEN=""
 
   # Find the first settings file with FMAPI config
   for candidate in "$HOME/.claude/settings.json" "./.claude/settings.json"; do
@@ -138,10 +137,6 @@ discover_config() {
       [[ -z "$CFG_PROFILE" ]] && { CFG_PROFILE=$(sed -n 's/^PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
       CFG_HOST=$(sed -n 's/^FMAPI_HOST="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
       [[ -z "$CFG_HOST" ]] && { CFG_HOST=$(sed -n 's/^HOST="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
-      CFG_LIFETIME=$(sed -n 's/^FMAPI_LIFETIME="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
-      [[ -z "$CFG_LIFETIME" ]] && { CFG_LIFETIME=$(sed -n 's/^LIFETIME="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
-      CFG_CACHE_FILE=$(sed -n 's/^FMAPI_CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
-      [[ -z "$CFG_CACHE_FILE" ]] && { CFG_CACHE_FILE=$(sed -n 's/^CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
     fi
 
     # Parse model names from settings.json env block
@@ -149,12 +144,6 @@ discover_config() {
     CFG_OPUS=$(jq -r '.env.ANTHROPIC_DEFAULT_OPUS_MODEL // empty' "$abs_path" 2>/dev/null) || true
     CFG_SONNET=$(jq -r '.env.ANTHROPIC_DEFAULT_SONNET_MODEL // empty' "$abs_path" 2>/dev/null) || true
     CFG_HAIKU=$(jq -r '.env.ANTHROPIC_DEFAULT_HAIKU_MODEL // empty' "$abs_path" 2>/dev/null) || true
-
-    # Parse cache file for token expiry
-    if [[ -n "$CFG_CACHE_FILE" && -f "$CFG_CACHE_FILE" ]]; then
-      CFG_PAT_EXPIRY_EPOCH=$(jq -r '.expiry_epoch // empty' "$CFG_CACHE_FILE" 2>/dev/null) || true
-      CFG_PAT_TOKEN=$(jq -r '.token // empty' "$CFG_CACHE_FILE" 2>/dev/null) || true
-    fi
 
     break  # Use first match
   done
@@ -189,30 +178,8 @@ do_status() {
   echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${CFG_HAIKU:-unknown}${RESET}"
   echo ""
 
-  # ── PAT health ────────────────────────────────────────────────────────────
-  echo -e "  ${BOLD}PAT Health${RESET}"
-  if [[ -n "$CFG_PAT_EXPIRY_EPOCH" ]]; then
-    local now remaining_s remaining_h remaining_m
-    now=$(date +%s)
-    remaining_s=$(( CFG_PAT_EXPIRY_EPOCH - now ))
-
-    if (( remaining_s <= 0 )); then
-      echo -e "  ${RED}${BOLD}EXPIRED${RESET}  PAT expired $(date -r "$CFG_PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z')"
-    elif (( remaining_s < 7200 )); then
-      remaining_m=$(( remaining_s / 60 ))
-      echo -e "  ${YELLOW}${BOLD}WARNING${RESET}  ${remaining_m}m remaining (expires $(date -r "$CFG_PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))"
-    else
-      remaining_h=$(( remaining_s / 3600 ))
-      remaining_m=$(( (remaining_s % 3600) / 60 ))
-      echo -e "  ${GREEN}${BOLD}HEALTHY${RESET}  ${remaining_h}h ${remaining_m}m remaining (expires $(date -r "$CFG_PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))"
-    fi
-  else
-    echo -e "  ${RED}${BOLD}UNKNOWN${RESET}  No cache file found"
-  fi
-  echo ""
-
-  # ── OAuth health ──────────────────────────────────────────────────────────
-  echo -e "  ${BOLD}OAuth Health${RESET}"
+  # ── Auth ─────────────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Auth${RESET}"
   if [[ -n "$CFG_PROFILE" ]] && command -v databricks &>/dev/null; then
     local oauth_tok=""
     oauth_tok=$(databricks auth token --profile "$CFG_PROFILE" --output json 2>/dev/null \
@@ -232,21 +199,18 @@ do_status() {
   echo -e "  ${BOLD}Files${RESET}"
   echo -e "  ${DIM}Settings${RESET}   ${CFG_SETTINGS_FILE}"
   echo -e "  ${DIM}Helper${RESET}     ${CFG_HELPER_FILE}"
-  if [[ -n "$CFG_CACHE_FILE" ]]; then
-    echo -e "  ${DIM}Cache${RESET}      ${CFG_CACHE_FILE}"
-  fi
   echo ""
 }
 
-# ── Refresh ───────────────────────────────────────────────────────────────────
-do_refresh() {
+# ── Reauth ────────────────────────────────────────────────────────────────────
+do_reauth() {
   if ! command -v jq &>/dev/null; then
-    error "jq is required for refresh. Install with: brew install jq"
+    error "jq is required for reauth. Install with: brew install jq"
     exit 1
   fi
 
   if ! command -v databricks &>/dev/null; then
-    error "Databricks CLI is required for refresh. Install with: brew tap databricks/tap && brew install databricks"
+    error "Databricks CLI is required for reauth. Install with: brew tap databricks/tap && brew install databricks"
     exit 1
   fi
 
@@ -259,51 +223,21 @@ do_refresh() {
 
   [[ -z "$CFG_PROFILE" ]] && { error "Could not determine profile from helper script."; exit 1; }
   [[ -z "$CFG_HOST" ]] && { error "Could not determine host from helper script."; exit 1; }
-  [[ -z "$CFG_LIFETIME" ]] && { error "Could not determine PAT lifetime from helper script."; exit 1; }
-  [[ -z "$CFG_CACHE_FILE" ]] && { error "Could not determine cache file from helper script."; exit 1; }
 
-  # Check OAuth session — do NOT launch browser, just report
+  info "Re-authenticating with Databricks (profile: ${CFG_PROFILE}) ..."
+  databricks auth login --host "$CFG_HOST" --profile "$CFG_PROFILE"
+
+  # Verify success
   local oauth_tok=""
   oauth_tok=$(databricks auth token --profile "$CFG_PROFILE" --output json 2>/dev/null \
     | jq -r '.access_token // empty') || true
 
-  if [[ -z "$oauth_tok" ]]; then
-    error "OAuth session expired. Re-authenticate first:"
-    echo -e "  ${CYAN}databricks auth login --host ${CFG_HOST} --profile ${CFG_PROFILE}${RESET}\n" >&2
+  if [[ -n "$oauth_tok" ]]; then
+    success "OAuth session re-established for profile '${CFG_PROFILE}'."
+  else
+    error "Re-authentication failed. Try manually: databricks auth login --host ${CFG_HOST} --profile ${CFG_PROFILE}"
     exit 1
   fi
-
-  # Revoke old FMAPI PATs
-  local old_ids=""
-  old_ids=$(databricks tokens list --profile "$CFG_PROFILE" --output json 2>/dev/null \
-    | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
-  if [[ -n "$old_ids" ]]; then
-    while IFS= read -r tid; do
-      [[ -n "$tid" ]] && databricks tokens delete "$tid" --profile "$CFG_PROFILE" 2>/dev/null || true
-    done <<< "$old_ids"
-  fi
-
-  # Create new PAT
-  local pat_json="" new_token="" expiry_epoch=""
-  pat_json=$(databricks tokens create \
-    --lifetime-seconds "$CFG_LIFETIME" \
-    --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
-    --profile "$CFG_PROFILE" \
-    --output json)
-  new_token=$(echo "$pat_json" | jq -r '.token_value // empty')
-  [[ -z "$new_token" ]] && { error "Failed to create PAT."; exit 1; }
-  expiry_epoch=$(( $(date +%s) + CFG_LIFETIME ))
-
-  # Update cache atomically
-  local tmpfile=""
-  tmpfile=$(mktemp "${CFG_CACHE_FILE}.XXXXXX")
-  _CLEANUP_FILES+=("$tmpfile")
-  jq -n --arg tok "$new_token" --argjson exp "$expiry_epoch" --argjson lt "$CFG_LIFETIME" \
-    '{token: $tok, expiry_epoch: $exp, lifetime_seconds: $lt}' > "$tmpfile"
-  chmod 600 "$tmpfile"
-  mv "$tmpfile" "$CFG_CACHE_FILE"
-
-  success "PAT refreshed (expires $(date -r "$expiry_epoch" '+%Y-%m-%d %H:%M %Z'))."
 }
 
 # ── Uninstall ────────────────────────────────────────────────────────────────
@@ -318,9 +252,7 @@ do_uninstall() {
 
   # ── Discover FMAPI artifacts ──────────────────────────────────────────────
   declare -a helper_scripts=()
-  declare -a cache_files=()
   declare -a settings_files=()
-  declare -a profiles=()
   # Check well-known settings locations for apiKeyHelper or _fmapi_meta
   for candidate in "$HOME/.claude/settings.json" "./.claude/settings.json"; do
     [[ -f "$candidate" ]] || continue
@@ -341,22 +273,6 @@ do_uninstall() {
         if ! array_contains "$helper" ${helper_scripts[@]+"${helper_scripts[@]}"}; then
           helper_scripts+=("$helper")
         fi
-        # Extract profile from helper script (supports both FMAPI_PROFILE and legacy PROFILE)
-        local profile=""
-        profile=$(sed -n 's/^FMAPI_PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
-        [[ -z "$profile" ]] && { profile=$(sed -n 's/^PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
-        if [[ -n "$profile" ]] && ! array_contains "$profile" ${profiles[@]+"${profiles[@]}"}; then
-          profiles+=("$profile")
-        fi
-        # Find cache file from helper script (supports both FMAPI_CACHE_FILE and legacy CACHE_FILE)
-        local cache_file=""
-        cache_file=$(sed -n 's/^FMAPI_CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
-        [[ -z "$cache_file" ]] && { cache_file=$(sed -n 's/^CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
-        if [[ -n "$cache_file" && -f "$cache_file" ]]; then
-          if ! array_contains "$cache_file" ${cache_files[@]+"${cache_files[@]}"}; then
-            cache_files+=("$cache_file")
-          fi
-        fi
       fi
     fi
 
@@ -371,7 +287,7 @@ do_uninstall() {
   done
 
   # ── Early exit if nothing found ──────────────────────────────────────────
-  if [[ ${#helper_scripts[@]} -eq 0 && ${#cache_files[@]} -eq 0 && ${#settings_files[@]} -eq 0 ]]; then
+  if [[ ${#helper_scripts[@]} -eq 0 && ${#settings_files[@]} -eq 0 ]]; then
     info "Nothing to uninstall. No FMAPI artifacts found."
     exit 0
   fi
@@ -383,14 +299,6 @@ do_uninstall() {
     echo -e "  ${CYAN}Helper scripts:${RESET}"
     for hs in "${helper_scripts[@]}"; do
       echo -e "    ${DIM}${hs}${RESET}"
-    done
-    echo ""
-  fi
-
-  if [[ ${#cache_files[@]} -gt 0 ]]; then
-    echo -e "  ${CYAN}Cache files:${RESET}"
-    for cf in "${cache_files[@]}"; do
-      echo -e "    ${DIM}${cf}${RESET}"
     done
     echo ""
   fi
@@ -411,15 +319,20 @@ do_uninstall() {
 
   echo ""
 
-  # ── Delete helper scripts and cache files ────────────────────────────────
+  # ── Delete helper scripts ───────────────────────────────────────────────
   for hs in "${helper_scripts[@]}"; do
     rm -f "$hs"
     success "Deleted ${hs}."
   done
 
-  for cf in "${cache_files[@]}"; do
-    rm -f "$cf"
-    success "Deleted ${cf}."
+  # ── Clean up legacy cache files next to helper scripts ──────────────────
+  for hs in "${helper_scripts[@]}"; do
+    local cache_file=""
+    cache_file="$(dirname "$hs")/.fmapi-pat-cache"
+    if [[ -f "$cache_file" ]]; then
+      rm -f "$cache_file"
+      success "Deleted legacy cache ${cache_file}."
+    fi
   done
 
   # ── Clean settings files ─────────────────────────────────────────────────
@@ -449,50 +362,6 @@ do_uninstall() {
     fi
   done
 
-  # ── Optionally revoke PATs ──────────────────────────────────────────────
-  if [[ ${#profiles[@]} -gt 0 ]]; then
-    echo ""
-    select_option "Revoke FMAPI PATs from Databricks?" \
-      "Yes|revoke PATs with comment starting with \"Claude Code FMAPI\"" \
-      "No|skip (tokens will expire on their own)"
-
-    if [[ "$SELECT_RESULT" -eq 1 ]]; then
-      if ! command -v databricks &>/dev/null; then
-        info "Databricks CLI not found. Skipping PAT revocation (tokens will expire naturally)."
-      else
-        for profile in "${profiles[@]}"; do
-          # Verify OAuth session
-          local oauth_tok=""
-          oauth_tok=$(databricks auth token --profile "$profile" --output json 2>/dev/null \
-            | jq -r '.access_token // empty') || true
-
-          if [[ -z "$oauth_tok" ]]; then
-            info "No active OAuth session for profile '${profile}'. Skipping PAT revocation for this profile."
-            continue
-          fi
-
-          local pat_ids=""
-          pat_ids=$(databricks tokens list --profile "$profile" --output json 2>/dev/null \
-            | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
-
-          if [[ -z "$pat_ids" ]]; then
-            info "No FMAPI PATs found for profile '${profile}'."
-            continue
-          fi
-
-          local count=0
-          while IFS= read -r tid; do
-            if [[ -n "$tid" ]]; then
-              databricks tokens delete "$tid" --profile "$profile" 2>/dev/null || true
-              (( count++ )) || true
-            fi
-          done <<< "$pat_ids"
-          success "Revoked ${count} FMAPI PAT(s) for profile '${profile}'."
-        done
-      fi
-    fi
-  fi
-
   # ── Remove plugin registration ─────────────────────────────────────────
   local plugins_file="$HOME/.claude/plugins/installed_plugins.json"
   if [[ -f "$plugins_file" ]] && jq -e '.["fmapi-codingagent"]' "$plugins_file" &>/dev/null; then
@@ -517,7 +386,7 @@ do_uninstall() {
 
 # ── CLI flag parsing ──────────────────────────────────────────────────────────
 CLI_HOST="" CLI_PROFILE="" CLI_MODEL="" CLI_OPUS="" CLI_SONNET="" CLI_HAIKU=""
-CLI_SETTINGS_LOCATION="" CLI_PAT_LIFETIME=""
+CLI_SETTINGS_LOCATION=""
 ACTION=""
 
 show_help() {
@@ -529,8 +398,8 @@ Installs prerequisites automatically (Homebrew, jq, Claude Code, Databricks CLI)
 
 Commands:
   --status              Show FMAPI configuration health dashboard
-  --refresh             Rotate PAT token (non-interactive)
-  --uninstall           Remove FMAPI helper scripts, settings, and optionally revoke PATs
+  --reauth              Re-authenticate Databricks OAuth session
+  --uninstall           Remove FMAPI helper scripts and settings
   -h, --help            Show this help message
 
 Setup options (skip interactive prompts):
@@ -542,7 +411,6 @@ Setup options (skip interactive prompts):
   --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
   --settings-location PATH
                         Where to write settings: "home", "cwd", or a custom path
-  --pat-lifetime DAYS   PAT lifetime in days: 1, 3, 5, or 7
 
 Examples:
   # Interactive setup (prompts for all values)
@@ -554,8 +422,8 @@ Examples:
   # Check configuration health
   bash setup-fmapi-claudecode.sh --status
 
-  # Rotate PAT token
-  bash setup-fmapi-claudecode.sh --refresh
+  # Re-authenticate OAuth session
+  bash setup-fmapi-claudecode.sh --reauth
 
   # Uninstall
   bash setup-fmapi-claudecode.sh --uninstall
@@ -567,7 +435,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)      show_help ;;
     --status)       ACTION="status"; shift ;;
-    --refresh)      ACTION="refresh"; shift ;;
+    --reauth)       ACTION="reauth"; shift ;;
     --uninstall)    ACTION="uninstall"; shift ;;
     --host)         CLI_HOST="${2:-}"; [[ -z "$CLI_HOST" ]] && { error "--host requires a URL."; exit 1; }; shift 2 ;;
     --profile)      CLI_PROFILE="${2:-}"; [[ -z "$CLI_PROFILE" ]] && { error "--profile requires a name."; exit 1; }; shift 2 ;;
@@ -576,7 +444,6 @@ while [[ $# -gt 0 ]]; do
     --sonnet)       CLI_SONNET="${2:-}"; [[ -z "$CLI_SONNET" ]] && { error "--sonnet requires a value."; exit 1; }; shift 2 ;;
     --haiku)        CLI_HAIKU="${2:-}"; [[ -z "$CLI_HAIKU" ]] && { error "--haiku requires a value."; exit 1; }; shift 2 ;;
     --settings-location) CLI_SETTINGS_LOCATION="${2:-}"; [[ -z "$CLI_SETTINGS_LOCATION" ]] && { error "--settings-location requires a value."; exit 1; }; shift 2 ;;
-    --pat-lifetime) CLI_PAT_LIFETIME="${2:-}"; [[ -z "$CLI_PAT_LIFETIME" ]] && { error "--pat-lifetime requires a value."; exit 1; }; shift 2 ;;
     *)              error "Unknown option: $1"; echo "  Run with --help for usage." >&2; exit 1 ;;
   esac
 done
@@ -584,7 +451,7 @@ done
 # ── Dispatch commands ─────────────────────────────────────────────────────────
 case "${ACTION}" in
   status)    do_status; exit 0 ;;
-  refresh)   do_refresh; exit 0 ;;
+  reauth)    do_reauth; exit 0 ;;
   uninstall) do_uninstall; exit 0 ;;
 esac
 
@@ -592,9 +459,9 @@ esac
 echo -e "\n${BOLD}  Claude Code x Databricks FMAPI Setup${RESET}\n"
 
 # Initialize CFG_* defaults (discover_config sets these, but jq may not be available yet)
-CFG_FOUND=false CFG_HOST="" CFG_PROFILE="" CFG_LIFETIME="" CFG_CACHE_FILE=""
+CFG_FOUND=false CFG_HOST="" CFG_PROFILE=""
 CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
-CFG_SETTINGS_FILE="" CFG_HELPER_FILE="" CFG_PAT_EXPIRY_EPOCH="" CFG_PAT_TOKEN=""
+CFG_SETTINGS_FILE="" CFG_HELPER_FILE=""
 
 # Discover existing config for defaults
 if command -v jq &>/dev/null; then
@@ -704,34 +571,8 @@ else
   esac
 fi
 
-# ── PAT lifetime ────────────────────────────────────────────────────────────
-if [[ -n "$CLI_PAT_LIFETIME" ]]; then
-  case "$CLI_PAT_LIFETIME" in
-    1) PAT_LIFETIME_SECONDS=86400;  PAT_LIFETIME_LABEL="1 day" ;;
-    3) PAT_LIFETIME_SECONDS=259200; PAT_LIFETIME_LABEL="3 days" ;;
-    5) PAT_LIFETIME_SECONDS=432000; PAT_LIFETIME_LABEL="5 days" ;;
-    7) PAT_LIFETIME_SECONDS=604800; PAT_LIFETIME_LABEL="7 days" ;;
-    *) error "Invalid --pat-lifetime: $CLI_PAT_LIFETIME. Use 1, 3, 5, or 7."; exit 1 ;;
-  esac
-else
-  select_option "PAT lifetime" \
-    "1 day|default" \
-    "3 days|" \
-    "5 days|" \
-    "7 days|"
-  PAT_LIFE_CHOICE="$SELECT_RESULT"
-
-  case "$PAT_LIFE_CHOICE" in
-    1) PAT_LIFETIME_SECONDS=86400;  PAT_LIFETIME_LABEL="1 day" ;;
-    2) PAT_LIFETIME_SECONDS=259200; PAT_LIFETIME_LABEL="3 days" ;;
-    3) PAT_LIFETIME_SECONDS=432000; PAT_LIFETIME_LABEL="5 days" ;;
-    4) PAT_LIFETIME_SECONDS=604800; PAT_LIFETIME_LABEL="7 days" ;;
-  esac
-fi
-
 SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
 HELPER_FILE="${SETTINGS_BASE}/.claude/fmapi-key-helper.sh"
-CACHE_FILE="${SETTINGS_BASE}/.claude/.fmapi-pat-cache"
 
 # ── Install dependencies ─────────────────────────────────────────────────────
 echo -e "\n${BOLD}Installing dependencies${RESET}"
@@ -784,7 +625,6 @@ get_oauth_token() {
     | jq -r '.access_token // empty'
 }
 
-# OAuth login is required (PAT creation needs an active session)
 OAUTH_TOKEN=$(get_oauth_token) || true
 if [[ -z "$OAUTH_TOKEN" ]]; then
   info "Logging in to ${DATABRICKS_HOST} ..."
@@ -795,35 +635,31 @@ fi
 [[ -z "$OAUTH_TOKEN" ]] && { error "Failed to get OAuth access token."; exit 1; }
 success "OAuth session established."
 
-info "Revoking old FMAPI PATs ..."
+# Clean up any legacy FMAPI PATs from prior installations
 OLD_PAT_IDS=$(databricks tokens list --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
   | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
 if [[ -n "$OLD_PAT_IDS" ]]; then
+  info "Cleaning up legacy FMAPI PATs ..."
   while IFS= read -r tid; do
     [[ -n "$tid" ]] && databricks tokens delete "$tid" --profile "$DATABRICKS_PROFILE" 2>/dev/null || true
   done <<< "$OLD_PAT_IDS"
-  success "Old PATs revoked."
+  success "Legacy PATs revoked."
 fi
 
-info "Creating PAT (lifetime: ${PAT_LIFETIME_LABEL}) ..."
-PAT_JSON=$(databricks tokens create \
-  --lifetime-seconds "$PAT_LIFETIME_SECONDS" \
-  --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
-  --profile "$DATABRICKS_PROFILE" \
-  --output json)
-INITIAL_PAT=$(echo "$PAT_JSON" | jq -r '.token_value // empty')
-[[ -z "$INITIAL_PAT" ]] && { error "Failed to create PAT."; exit 1; }
-PAT_EXPIRY_EPOCH=$(( $(date +%s) + PAT_LIFETIME_SECONDS ))
-success "PAT created (expires: $(date -r "$PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))."
+# Clean up legacy cache file if present
+LEGACY_CACHE="${SETTINGS_BASE}/.claude/.fmapi-pat-cache"
+if [[ -f "$LEGACY_CACHE" ]]; then
+  rm -f "$LEGACY_CACHE"
+  success "Removed legacy PAT cache."
+fi
 
 # ── Write .claude/settings.json ──────────────────────────────────────────────
 echo -e "\n${BOLD}Writing settings${RESET}"
 
 mkdir -p "$(dirname "$SETTINGS_FILE")"
 
-# Compute TTL: half of PAT lifetime in milliseconds, capped at 1 hour
-TTL_MS=$(( PAT_LIFETIME_SECONDS * 500 ))
-(( TTL_MS > 3600000 )) && TTL_MS=3600000
+# Fixed TTL: 50 minutes (3000000ms) — 10-minute buffer before 1-hour OAuth token expiry
+TTL_MS=3000000
 
 env_json=$(jq -n \
   --arg model "$ANTHROPIC_MODEL" \
@@ -864,108 +700,44 @@ echo -e "\n${BOLD}API key helper${RESET}"
 cat > "$HELPER_FILE" << 'HELPER_SCRIPT'
 #!/bin/sh
 set -eu
-umask 077
-
-# Temp file cleanup on exit/interrupt
-_cleanup_tmp=""
-_cleanup() { [ -n "$_cleanup_tmp" ] && rm -f "$_cleanup_tmp" 2>/dev/null || true; }
-trap _cleanup EXIT INT TERM
 
 FMAPI_PROFILE="__PROFILE__"
 FMAPI_HOST="__HOST__"
-FMAPI_LIFETIME="__LIFETIME__"
-FMAPI_CACHE_FILE="__CACHE_FILE__"
 
-get_cached_token() {
-  [ -f "$FMAPI_CACHE_FILE" ] || return 1
-  token=$(jq -r '.token // empty' "$FMAPI_CACHE_FILE" 2>/dev/null) || return 1
-  expiry=$(jq -r '.expiry_epoch // 0' "$FMAPI_CACHE_FILE" 2>/dev/null) || return 1
-  now=$(date +%s)
-  # Return cached token if still valid with 5-minute buffer
-  if [ -n "$token" ] && [ "$now" -lt "$((expiry - 300))" ]; then
-    echo "$token"
-    return 0
-  fi
-  return 1
-}
+# Get OAuth access token (databricks CLI auto-refreshes using refresh token)
+token=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
+  | jq -r '.access_token // empty') || true
 
-create_pat() {
-  # Check OAuth session
-  oauth_tok=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
-    | jq -r '.access_token // empty') || true
-  if [ -z "$oauth_tok" ]; then
-    # Determine best output destination: /dev/tty for direct terminal visibility,
-    # fall back to stderr for portability (Windows, CI, non-interactive sessions)
-    if [ -e /dev/tty ]; then
-      _reauth_out="/dev/tty"
-    else
-      _reauth_out="/dev/stderr"
-    fi
-    echo "FMAPI: OAuth session expired — attempting re-authentication ..." > "$_reauth_out"
-    if databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" > "$_reauth_out" 2>&1; then
-      oauth_tok=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
-        | jq -r '.access_token // empty') || true
-      if [ -z "$oauth_tok" ]; then
-        echo "FMAPI: Re-authentication failed. Run manually: databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" > "$_reauth_out"
-        exit 1
-      fi
-      echo "FMAPI: Re-authentication successful." > "$_reauth_out"
-    else
-      echo "FMAPI: Re-authentication failed. Run manually: databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" > "$_reauth_out"
-      exit 1
-    fi
-  fi
-
-  # Revoke old FMAPI PATs before creating new one
-  databricks tokens list --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
-    | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null \
-    | while IFS= read -r tid; do
-        [ -n "$tid" ] && databricks tokens delete "$tid" --profile "$FMAPI_PROFILE" 2>/dev/null || true
-      done
-
-  # Create new PAT
-  pat_json=$(databricks tokens create \
-    --lifetime-seconds "$FMAPI_LIFETIME" \
-    --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
-    --profile "$FMAPI_PROFILE" \
-    --output json)
-  token=$(echo "$pat_json" | jq -r '.token_value // empty')
-
-  if [ -z "$token" ]; then
-    echo "FMAPI: Failed to create PAT." >&2
-    exit 1
-  fi
-
-  # Write cache atomically
-  expiry=$(($(date +%s) + FMAPI_LIFETIME))
-  tmpfile=$(mktemp "${FMAPI_CACHE_FILE}.XXXXXX")
-  _cleanup_tmp="$tmpfile"
-  jq -n --arg tok "$token" --argjson exp "$expiry" --argjson lt "$FMAPI_LIFETIME" \
-    '{token: $tok, expiry_epoch: $exp, lifetime_seconds: $lt}' > "$tmpfile"
-  chmod 600 "$tmpfile"
-  mv "$tmpfile" "$FMAPI_CACHE_FILE"
-  _cleanup_tmp=""
-
+if [ -n "$token" ]; then
   echo "$token"
-}
+  exit 0
+fi
 
-# Main: use cached token or create a new one
-get_cached_token || create_pat
+# Refresh token expired — attempt browser-based re-authentication
+if [ -e /dev/tty ]; then
+  _out="/dev/tty"
+else
+  _out="/dev/stderr"
+fi
+
+echo "FMAPI: OAuth session expired — attempting re-authentication ..." > "$_out"
+if databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" > "$_out" 2>&1; then
+  token=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
+    | jq -r '.access_token // empty') || true
+  if [ -n "$token" ]; then
+    echo "FMAPI: Re-authentication successful." > "$_out"
+    echo "$token"
+    exit 0
+  fi
+fi
+
+echo "FMAPI: Re-authentication failed. Run manually: databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" > "$_out"
+exit 1
 HELPER_SCRIPT
 
-sed -i '' "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g; s|__LIFETIME__|${PAT_LIFETIME_SECONDS}|g; s|__CACHE_FILE__|${CACHE_FILE}|g" "$HELPER_FILE"
+sed -i '' "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g" "$HELPER_FILE"
 chmod 700 "$HELPER_FILE"
 success "Helper script written to ${HELPER_FILE}."
-
-# ── Seed cache file ──────────────────────────────────────────────────────────
-info "Seeding PAT cache ..."
-seed_tmp=$(mktemp "${CACHE_FILE}.XXXXXX")
-_CLEANUP_FILES+=("$seed_tmp")
-jq -n --arg tok "$INITIAL_PAT" --argjson exp "$PAT_EXPIRY_EPOCH" --argjson lt "$PAT_LIFETIME_SECONDS" \
-  '{token: $tok, expiry_epoch: $exp, lifetime_seconds: $lt}' > "$seed_tmp"
-chmod 600 "$seed_tmp"
-mv "$seed_tmp" "$CACHE_FILE"
-success "Cache seeded at ${CACHE_FILE}."
 
 # ── Self-install plugin ───────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -991,7 +763,7 @@ if [[ -f "${SCRIPT_DIR}/.claude-plugin/plugin.json" ]]; then
       jq -n --arg path "$SCRIPT_DIR" \
         '{"fmapi-codingagent": {"scope": "user", "installPath": $path}}' > "$PLUGINS_FILE"
     fi
-    success "Plugin registered (skills: /fmapi-codingagent-status, /fmapi-codingagent-refresh, /fmapi-codingagent-setup)."
+    success "Plugin registered (skills: /fmapi-codingagent-status, /fmapi-codingagent-reauth, /fmapi-codingagent-setup)."
   fi
 fi
 
@@ -1003,7 +775,7 @@ echo -e "  ${DIM}Model${RESET}      ${BOLD}${ANTHROPIC_MODEL}${RESET}"
 echo -e "  ${DIM}Opus${RESET}       ${BOLD}${ANTHROPIC_OPUS_MODEL}${RESET}"
 echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
 echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
-echo -e "  ${DIM}Auth${RESET}       ${BOLD}PAT (${PAT_LIFETIME_LABEL}, expires $(date -r "$PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))${RESET}"
+echo -e "  ${DIM}Auth${RESET}       ${BOLD}OAuth (auto-refresh, 50m check interval)${RESET}"
 echo -e "  ${DIM}Helper${RESET}     ${BOLD}${HELPER_FILE}${RESET}"
 echo -e "  ${DIM}Settings${RESET}   ${BOLD}${SETTINGS_FILE}${RESET}"
 echo -e "\n  Run ${CYAN}${BOLD}claude${RESET} to start.\n"
