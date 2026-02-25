@@ -123,8 +123,6 @@ do_uninstall() {
   declare -a cache_files=()
   declare -a settings_files=()
   declare -a profiles=()
-  declare -a wrapper_entries=()   # legacy: "rc_file|cmd_name"
-
   # Check well-known settings locations for apiKeyHelper or _fmapi_meta
   for candidate in "$HOME/.claude/settings.json" "./.claude/settings.json"; do
     [[ -f "$candidate" ]] || continue
@@ -172,45 +170,8 @@ do_uninstall() {
     fi
   done
 
-  # Check RC files for legacy wrapper blocks
-  local rc_files=("$HOME/.zshrc" "$HOME/.bashrc")
-  for rc in "${rc_files[@]}"; do
-    [[ -f "$rc" ]] || continue
-    while IFS= read -r marker_line; do
-      local cmd_name=""
-      cmd_name=$(echo "$marker_line" | sed -n 's/^# >>> \(.*\) wrapper >>>$/\1/p')
-      [[ -z "$cmd_name" ]] && continue
-
-      wrapper_entries+=("${rc}|${cmd_name}")
-
-      # Extract profile from the wrapper block
-      local end_marker="# <<< ${cmd_name} wrapper <<<"
-      local profile=""
-      profile=$(sed -n "/# >>> ${cmd_name} wrapper >>>/,/${end_marker}/{ s/.*profile=\"\([^\"]*\)\".*/\1/p; }" "$rc" | head -1) || true
-      if [[ -n "$profile" ]] && ! array_contains "$profile" ${profiles[@]+"${profiles[@]}"}; then
-        profiles+=("$profile")
-      fi
-
-      # Extract settings file from wrapper block
-      local sf=""
-      sf=$(sed -n "/# >>> ${cmd_name} wrapper >>>/,/${end_marker}/{ s/.*local sf=\"\([^\"]*\)\".*/\1/p; }" "$rc" | head -1) || true
-      if [[ -n "$sf" ]]; then
-        sf="${sf/#\~/$HOME}"
-        if [[ -f "$sf" ]]; then
-          local abs_sf=""
-          abs_sf=$(cd "$(dirname "$sf")" && echo "$(pwd)/$(basename "$sf")")
-          if ! array_contains "$abs_sf" ${settings_files[@]+"${settings_files[@]}"}; then
-            if jq -e '._fmapi_meta' "$abs_sf" &>/dev/null; then
-              settings_files+=("$abs_sf")
-            fi
-          fi
-        fi
-      fi
-    done < <(grep -n '# >>> .* wrapper >>>' "$rc" 2>/dev/null | sed 's/^[0-9]*://')
-  done
-
   # ── Early exit if nothing found ──────────────────────────────────────────
-  if [[ ${#helper_scripts[@]} -eq 0 && ${#cache_files[@]} -eq 0 && ${#settings_files[@]} -eq 0 && ${#wrapper_entries[@]} -eq 0 ]]; then
+  if [[ ${#helper_scripts[@]} -eq 0 && ${#cache_files[@]} -eq 0 && ${#settings_files[@]} -eq 0 ]]; then
     info "Nothing to uninstall. No FMAPI artifacts found."
     exit 0
   fi
@@ -242,17 +203,6 @@ do_uninstall() {
     echo ""
   fi
 
-  if [[ ${#wrapper_entries[@]} -gt 0 ]]; then
-    echo -e "  ${CYAN}Legacy shell wrappers:${RESET}"
-    for entry in "${wrapper_entries[@]}"; do
-      local rc="" cmd=""
-      rc=$(echo "$entry" | cut -d'|' -f1)
-      cmd=$(echo "$entry" | cut -d'|' -f2)
-      echo -e "    ${BOLD}${cmd}${RESET} in ${DIM}${rc}${RESET}"
-    done
-    echo ""
-  fi
-
   # ── Confirm removal ──────────────────────────────────────────────────────
   select_option "Remove FMAPI artifacts?" \
     "Yes|remove artifacts listed above" \
@@ -270,19 +220,6 @@ do_uninstall() {
   for cf in "${cache_files[@]}"; do
     rm -f "$cf"
     success "Deleted ${cf}."
-  done
-
-  # ── Remove legacy wrapper blocks ────────────────────────────────────────
-  for entry in "${wrapper_entries[@]}"; do
-    local rc="" cmd=""
-    rc=$(echo "$entry" | cut -d'|' -f1)
-    cmd=$(echo "$entry" | cut -d'|' -f2)
-    local begin="# >>> ${cmd} wrapper >>>"
-    local end="# <<< ${cmd} wrapper <<<"
-    if grep -qF "$begin" "$rc" 2>/dev/null; then
-      sed -i '' "/$begin/,/$end/d" "$rc"
-      success "Removed legacy ${cmd} wrapper from ${rc}."
-    fi
   done
 
   # ── Clean settings files ─────────────────────────────────────────────────
@@ -658,18 +595,6 @@ jq -n --arg tok "$INITIAL_PAT" --argjson exp "$PAT_EXPIRY_EPOCH" --argjson lt "$
 chmod 600 "$seed_tmp"
 mv "$seed_tmp" "$CACHE_FILE"
 success "Cache seeded at ${CACHE_FILE}."
-
-# ── Remove legacy shell wrappers ─────────────────────────────────────────────
-for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
-  [[ -f "$rc" ]] || continue
-  while grep -q '# >>> .* wrapper >>>' "$rc" 2>/dev/null; do
-    wrapper_cmd=$(grep -m1 '# >>> .* wrapper >>>' "$rc" | sed 's/^# >>> \(.*\) wrapper >>>$/\1/')
-    begin_marker="# >>> ${wrapper_cmd} wrapper >>>"
-    end_marker="# <<< ${wrapper_cmd} wrapper <<<"
-    sed -i '' "/${begin_marker}/,/${end_marker}/d" "$rc"
-    info "Removed legacy ${wrapper_cmd} wrapper from ${rc}."
-  done
-done
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
