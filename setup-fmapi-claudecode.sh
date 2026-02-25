@@ -344,6 +344,9 @@ read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name: ")" DATABRI
 read -rp "$(echo -e "  ${CYAN}?${RESET} Model ${DIM}[databricks-claude-opus-4-6]${RESET}: ")" ANTHROPIC_MODEL
 ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-databricks-claude-opus-4-6}"
 
+read -rp "$(echo -e "  ${CYAN}?${RESET} Opus model ${DIM}[databricks-claude-opus-4-6]${RESET}: ")" ANTHROPIC_OPUS_MODEL
+ANTHROPIC_OPUS_MODEL="${ANTHROPIC_OPUS_MODEL:-databricks-claude-opus-4-6}"
+
 read -rp "$(echo -e "  ${CYAN}?${RESET} Sonnet model ${DIM}[databricks-claude-sonnet-4-6]${RESET}: ")" ANTHROPIC_SONNET_MODEL
 ANTHROPIC_SONNET_MODEL="${ANTHROPIC_SONNET_MODEL:-databricks-claude-sonnet-4-6}"
 
@@ -498,16 +501,17 @@ env_json=$(jq -n \
   --arg model "$ANTHROPIC_MODEL" \
   --arg base  "${DATABRICKS_HOST}/serving-endpoints/anthropic" \
   --arg token "$ANTHROPIC_AUTH_TOKEN" \
+  --arg opus "$ANTHROPIC_OPUS_MODEL" \
   --arg sonnet "$ANTHROPIC_SONNET_MODEL" \
   --arg haiku "$ANTHROPIC_HAIKU_MODEL" \
   '{
     "ANTHROPIC_MODEL": $model,
     "ANTHROPIC_BASE_URL": $base,
     "ANTHROPIC_AUTH_TOKEN": $token,
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-6",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": $opus,
     "ANTHROPIC_DEFAULT_SONNET_MODEL": $sonnet,
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": $haiku,
-x    "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
+    "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
   }')
 
@@ -644,6 +648,7 @@ echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
 echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${DATABRICKS_HOST}${RESET}"
 echo -e "  ${DIM}Profile${RESET}    ${BOLD}${DATABRICKS_PROFILE}${RESET}"
 echo -e "  ${DIM}Model${RESET}      ${BOLD}${ANTHROPIC_MODEL}${RESET}"
+echo -e "  ${DIM}Opus${RESET}       ${BOLD}${ANTHROPIC_OPUS_MODEL}${RESET}"
 echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
 echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
 echo -e "  ${DIM}Auth${RESET}       ${BOLD}PAT (${PAT_LIFETIME_LABEL}, expires $(date -r "$PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))${RESET}"
