@@ -1,5 +1,15 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
+
+# Temp file cleanup on exit/interrupt
+declare -a _CLEANUP_FILES=()
+_cleanup() {
+  for f in "${_CLEANUP_FILES[@]+"${_CLEANUP_FILES[@]}"}"; do
+    rm -f "$f" 2>/dev/null || true
+  done
+}
+trap _cleanup EXIT
 
 # ── Formatting ────────────────────────────────────────────────────────────────
 BOLD='\033[1m' DIM='\033[2m' RED='\033[31m' GREEN='\033[32m'
@@ -108,89 +118,118 @@ do_uninstall() {
     exit 1
   fi
 
-  # ── Discover wrappers in both RC files ───────────────────────────────────
-  local rc_files=("$HOME/.zshrc" "$HOME/.bashrc")
-  declare -a wrapper_entries=()   # "rc_file|cmd_name|profile|settings_file"
-  declare -a found_settings=()
+  # ── Discover FMAPI artifacts ──────────────────────────────────────────────
+  declare -a helper_scripts=()
+  declare -a cache_files=()
+  declare -a settings_files=()
+  declare -a profiles=()
+  declare -a wrapper_entries=()   # legacy: "rc_file|cmd_name"
 
+  # Check well-known settings locations for apiKeyHelper or _fmapi_meta
+  for candidate in "$HOME/.claude/settings.json" "./.claude/settings.json"; do
+    [[ -f "$candidate" ]] || continue
+    local abs_path=""
+    abs_path=$(cd "$(dirname "$candidate")" && echo "$(pwd)/$(basename "$candidate")")
+    if array_contains "$abs_path" ${settings_files[@]+"${settings_files[@]}"}; then
+      continue
+    fi
+
+    local has_fmapi=false
+
+    # Check for new-style apiKeyHelper
+    local helper=""
+    helper=$(jq -r '.apiKeyHelper // empty' "$abs_path" 2>/dev/null) || true
+    if [[ -n "$helper" ]]; then
+      has_fmapi=true
+      if [[ -f "$helper" ]]; then
+        if ! array_contains "$helper" ${helper_scripts[@]+"${helper_scripts[@]}"}; then
+          helper_scripts+=("$helper")
+        fi
+        # Extract profile from helper script
+        local profile=""
+        profile=$(sed -n 's/^PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+        if [[ -n "$profile" ]] && ! array_contains "$profile" ${profiles[@]+"${profiles[@]}"}; then
+          profiles+=("$profile")
+        fi
+        # Find cache file from helper script
+        local cache_file=""
+        cache_file=$(sed -n 's/^CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+        if [[ -n "$cache_file" && -f "$cache_file" ]]; then
+          if ! array_contains "$cache_file" ${cache_files[@]+"${cache_files[@]}"}; then
+            cache_files+=("$cache_file")
+          fi
+        fi
+      fi
+    fi
+
+    # Check for old-style _fmapi_meta (backward compat)
+    if jq -e '._fmapi_meta' "$abs_path" &>/dev/null; then
+      has_fmapi=true
+    fi
+
+    if [[ "$has_fmapi" == true ]]; then
+      settings_files+=("$abs_path")
+    fi
+  done
+
+  # Check RC files for legacy wrapper blocks
+  local rc_files=("$HOME/.zshrc" "$HOME/.bashrc")
   for rc in "${rc_files[@]}"; do
     [[ -f "$rc" ]] || continue
-    # Find all begin markers: # >>> <name> wrapper >>>
     while IFS= read -r marker_line; do
       local cmd_name=""
       cmd_name=$(echo "$marker_line" | sed -n 's/^# >>> \(.*\) wrapper >>>$/\1/p')
       [[ -z "$cmd_name" ]] && continue
 
-      local end_marker="# <<< ${cmd_name} wrapper <<<"
+      wrapper_entries+=("${rc}|${cmd_name}")
 
       # Extract profile from the wrapper block
+      local end_marker="# <<< ${cmd_name} wrapper <<<"
       local profile=""
-      profile=$(sed -n "/# >>> ${cmd_name} wrapper >>>/,/${end_marker}/{ s/.*profile=\"\([^\"]*\)\".*/\1/p; }" "$rc" | head -1)
+      profile=$(sed -n "/# >>> ${cmd_name} wrapper >>>/,/${end_marker}/{ s/.*profile=\"\([^\"]*\)\".*/\1/p; }" "$rc" | head -1) || true
+      if [[ -n "$profile" ]] && ! array_contains "$profile" ${profiles[@]+"${profiles[@]}"}; then
+        profiles+=("$profile")
+      fi
 
-      # Extract settings file path from the wrapper block
+      # Extract settings file from wrapper block
       local sf=""
-      sf=$(sed -n "/# >>> ${cmd_name} wrapper >>>/,/${end_marker}/{ s/.*local sf=\"\([^\"]*\)\".*/\1/p; }" "$rc" | head -1)
-
-      wrapper_entries+=("${rc}|${cmd_name}|${profile}|${sf}")
-
-      # Collect settings file if it exists
+      sf=$(sed -n "/# >>> ${cmd_name} wrapper >>>/,/${end_marker}/{ s/.*local sf=\"\([^\"]*\)\".*/\1/p; }" "$rc" | head -1) || true
       if [[ -n "$sf" ]]; then
-        found_settings+=("$sf")
+        sf="${sf/#\~/$HOME}"
+        if [[ -f "$sf" ]]; then
+          local abs_sf=""
+          abs_sf=$(cd "$(dirname "$sf")" && echo "$(pwd)/$(basename "$sf")")
+          if ! array_contains "$abs_sf" ${settings_files[@]+"${settings_files[@]}"}; then
+            if jq -e '._fmapi_meta' "$abs_sf" &>/dev/null; then
+              settings_files+=("$abs_sf")
+            fi
+          fi
+        fi
       fi
     done < <(grep -n '# >>> .* wrapper >>>' "$rc" 2>/dev/null | sed 's/^[0-9]*://')
   done
 
-  # ── Discover settings files ──────────────────────────────────────────────
-  # Add well-known locations
-  for candidate in "$HOME/.claude/settings.json" "./.claude/settings.json"; do
-    found_settings+=("$candidate")
-  done
-
-  # Deduplicate by absolute path, keep only files with _fmapi_meta
-  declare -a settings_files=()
-  for sf in "${found_settings[@]}"; do
-    [[ -z "$sf" ]] && continue
-    # Expand ~ if present
-    sf="${sf/#\~/$HOME}"
-    # Resolve to absolute path if file exists
-    if [[ -f "$sf" ]]; then
-      local abs_path=""
-      abs_path=$(cd "$(dirname "$sf")" && echo "$(pwd)/$(basename "$sf")")
-      if ! array_contains "$abs_path" ${settings_files[@]+"${settings_files[@]}"}; then
-        # Only include if it has _fmapi_meta
-        if jq -e '._fmapi_meta' "$abs_path" &>/dev/null; then
-          settings_files+=("$abs_path")
-        fi
-      fi
-    fi
-  done
-
-  # ── Collect unique profiles ──────────────────────────────────────────────
-  declare -a profiles=()
-  for entry in "${wrapper_entries[@]}"; do
-    local profile=""
-    profile=$(echo "$entry" | cut -d'|' -f3)
-    if [[ -n "$profile" ]] && ! array_contains "$profile" ${profiles[@]+"${profiles[@]}"}; then
-      profiles+=("$profile")
-    fi
-  done
-
   # ── Early exit if nothing found ──────────────────────────────────────────
-  if [[ ${#wrapper_entries[@]} -eq 0 && ${#settings_files[@]} -eq 0 ]]; then
-    info "Nothing to uninstall. No FMAPI wrappers or settings found."
+  if [[ ${#helper_scripts[@]} -eq 0 && ${#cache_files[@]} -eq 0 && ${#settings_files[@]} -eq 0 && ${#wrapper_entries[@]} -eq 0 ]]; then
+    info "Nothing to uninstall. No FMAPI artifacts found."
     exit 0
   fi
 
   # ── Display findings ─────────────────────────────────────────────────────
   echo -e "  ${BOLD}Found the following FMAPI artifacts:${RESET}\n"
 
-  if [[ ${#wrapper_entries[@]} -gt 0 ]]; then
-    echo -e "  ${CYAN}Shell wrappers:${RESET}"
-    for entry in "${wrapper_entries[@]}"; do
-      local rc="" cmd=""
-      rc=$(echo "$entry" | cut -d'|' -f1)
-      cmd=$(echo "$entry" | cut -d'|' -f2)
-      echo -e "    ${BOLD}${cmd}${RESET} in ${DIM}${rc}${RESET}"
+  if [[ ${#helper_scripts[@]} -gt 0 ]]; then
+    echo -e "  ${CYAN}Helper scripts:${RESET}"
+    for hs in "${helper_scripts[@]}"; do
+      echo -e "    ${DIM}${hs}${RESET}"
+    done
+    echo ""
+  fi
+
+  if [[ ${#cache_files[@]} -gt 0 ]]; then
+    echo -e "  ${CYAN}Cache files:${RESET}"
+    for cf in "${cache_files[@]}"; do
+      echo -e "    ${DIM}${cf}${RESET}"
     done
     echo ""
   fi
@@ -203,15 +242,37 @@ do_uninstall() {
     echo ""
   fi
 
+  if [[ ${#wrapper_entries[@]} -gt 0 ]]; then
+    echo -e "  ${CYAN}Legacy shell wrappers:${RESET}"
+    for entry in "${wrapper_entries[@]}"; do
+      local rc="" cmd=""
+      rc=$(echo "$entry" | cut -d'|' -f1)
+      cmd=$(echo "$entry" | cut -d'|' -f2)
+      echo -e "    ${BOLD}${cmd}${RESET} in ${DIM}${rc}${RESET}"
+    done
+    echo ""
+  fi
+
   # ── Confirm removal ──────────────────────────────────────────────────────
-  select_option "Remove wrappers and clean settings?" \
-    "Yes|remove FMAPI artifacts listed above" \
+  select_option "Remove FMAPI artifacts?" \
+    "Yes|remove artifacts listed above" \
     "No|cancel and exit"
   [[ "$SELECT_RESULT" -ne 1 ]] && { info "Cancelled."; exit 0; }
 
   echo ""
 
-  # ── Remove wrapper blocks ────────────────────────────────────────────────
+  # ── Delete helper scripts and cache files ────────────────────────────────
+  for hs in "${helper_scripts[@]}"; do
+    rm -f "$hs"
+    success "Deleted ${hs}."
+  done
+
+  for cf in "${cache_files[@]}"; do
+    rm -f "$cf"
+    success "Deleted ${cf}."
+  done
+
+  # ── Remove legacy wrapper blocks ────────────────────────────────────────
   for entry in "${wrapper_entries[@]}"; do
     local rc="" cmd=""
     rc=$(echo "$entry" | cut -d'|' -f1)
@@ -220,19 +281,21 @@ do_uninstall() {
     local end="# <<< ${cmd} wrapper <<<"
     if grep -qF "$begin" "$rc" 2>/dev/null; then
       sed -i '' "/$begin/,/$end/d" "$rc"
-      success "Removed ${cmd} wrapper from ${rc}."
+      success "Removed legacy ${cmd} wrapper from ${rc}."
     fi
   done
 
   # ── Clean settings files ─────────────────────────────────────────────────
-  local fmapi_env_keys='["ANTHROPIC_MODEL","ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_DEFAULT_OPUS_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL","ANTHROPIC_DEFAULT_HAIKU_MODEL","ANTHROPIC_CUSTOM_HEADERS","CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"]'
+  local fmapi_env_keys='["ANTHROPIC_MODEL","ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_DEFAULT_OPUS_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL","ANTHROPIC_DEFAULT_HAIKU_MODEL","ANTHROPIC_CUSTOM_HEADERS","CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS","CLAUDE_CODE_API_KEY_HELPER_TTL_MS"]'
 
   for sf in "${settings_files[@]}"; do
     local tmpfile=""
     tmpfile=$(mktemp "${sf}.XXXXXX")
+    _CLEANUP_FILES+=("$tmpfile")
     jq --argjson keys "$fmapi_env_keys" '
       .env = ((.env // {}) | to_entries | map(select(.key as $k | $keys | index($k) | not)) | from_entries)
       | del(._fmapi_meta)
+      | del(.apiKeyHelper)
       | if .env == {} then del(.env) else . end
     ' "$sf" > "$tmpfile"
     chmod 600 "$tmpfile"
@@ -295,20 +358,6 @@ do_uninstall() {
 
   # ── Summary ──────────────────────────────────────────────────────────────
   echo -e "\n${GREEN}${BOLD}  Uninstall complete!${RESET}\n"
-
-  # Collect unique RC files that were modified
-  declare -a modified_rcs=()
-  for entry in "${wrapper_entries[@]}"; do
-    local rc=""
-    rc=$(echo "$entry" | cut -d'|' -f1)
-    if ! array_contains "$rc" ${modified_rcs[@]+"${modified_rcs[@]}"}; then
-      modified_rcs+=("$rc")
-    fi
-  done
-  for rc in "${modified_rcs[@]}"; do
-    echo -e "  Run ${CYAN}${BOLD}source ${rc}${RESET} or open a ${BOLD}new terminal${RESET} to apply changes."
-  done
-  echo ""
 }
 
 # ── Help ──────────────────────────────────────────────────────────────────────
@@ -319,7 +368,7 @@ do_uninstall() {
   echo "Installs prerequisites automatically (Homebrew, jq, Claude Code, Databricks CLI)."
   echo ""
   echo "Options:"
-  echo "  --uninstall   Remove FMAPI wrappers, settings, and optionally revoke PATs"
+  echo "  --uninstall   Remove FMAPI helper scripts, settings, and optionally revoke PATs"
   echo "  -h, --help    Show this help message"
   exit 0
 }
@@ -352,23 +401,6 @@ ANTHROPIC_SONNET_MODEL="${ANTHROPIC_SONNET_MODEL:-databricks-claude-sonnet-4-6}"
 
 read -rp "$(echo -e "  ${CYAN}?${RESET} Haiku model ${DIM}[databricks-claude-haiku-4-5]${RESET}: ")" ANTHROPIC_HAIKU_MODEL
 ANTHROPIC_HAIKU_MODEL="${ANTHROPIC_HAIKU_MODEL:-databricks-claude-haiku-4-5}"
-
-select_option "Command name" \
-  "claude|override the default claude command, default" \
-  "fmapi-claude|separate command" \
-  "Custom|enter your own command name"
-CMD_CHOICE="$SELECT_RESULT"
-
-case "$CMD_CHOICE" in
-  1) CMD_NAME="claude" ;;
-  2) CMD_NAME="fmapi-claude" ;;
-  3)
-    read -rp "$(echo -e "  ${CYAN}?${RESET} Command name: ")" CMD_NAME
-    [[ -z "$CMD_NAME" ]] && { error "Command name is required."; exit 1; }
-    # Validate: must be a valid shell function name (alphanumeric, hyphens, underscores)
-    [[ "$CMD_NAME" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { error "Invalid command name: '$CMD_NAME'. Use letters, numbers, hyphens, and underscores."; exit 1; }
-    ;;
-esac
 
 select_option "Settings location" \
   "Home directory|~/.claude/settings.json, default" \
@@ -408,6 +440,8 @@ case "$PAT_LIFE_CHOICE" in
 esac
 
 SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
+HELPER_FILE="${SETTINGS_BASE}/.claude/fmapi-key-helper.sh"
+CACHE_FILE="${SETTINGS_BASE}/.claude/.fmapi-pat-cache"
 
 # ── Install dependencies ─────────────────────────────────────────────────────
 echo -e "\n${BOLD}Installing dependencies${RESET}"
@@ -487,8 +521,8 @@ PAT_JSON=$(databricks tokens create \
   --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
   --profile "$DATABRICKS_PROFILE" \
   --output json)
-ANTHROPIC_AUTH_TOKEN=$(echo "$PAT_JSON" | jq -r '.token_value // empty')
-[[ -z "$ANTHROPIC_AUTH_TOKEN" ]] && { error "Failed to create PAT."; exit 1; }
+INITIAL_PAT=$(echo "$PAT_JSON" | jq -r '.token_value // empty')
+[[ -z "$INITIAL_PAT" ]] && { error "Failed to create PAT."; exit 1; }
 PAT_EXPIRY_EPOCH=$(( $(date +%s) + PAT_LIFETIME_SECONDS ))
 success "PAT created (expires: $(date -r "$PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))."
 
@@ -497,151 +531,145 @@ echo -e "\n${BOLD}Writing settings${RESET}"
 
 mkdir -p "$(dirname "$SETTINGS_FILE")"
 
+# Compute TTL: half of PAT lifetime in milliseconds, capped at 1 hour
+TTL_MS=$(( PAT_LIFETIME_SECONDS * 500 ))
+(( TTL_MS > 3600000 )) && TTL_MS=3600000
+
 env_json=$(jq -n \
   --arg model "$ANTHROPIC_MODEL" \
   --arg base  "${DATABRICKS_HOST}/serving-endpoints/anthropic" \
-  --arg token "$ANTHROPIC_AUTH_TOKEN" \
   --arg opus "$ANTHROPIC_OPUS_MODEL" \
   --arg sonnet "$ANTHROPIC_SONNET_MODEL" \
   --arg haiku "$ANTHROPIC_HAIKU_MODEL" \
+  --arg ttl "$TTL_MS" \
   '{
     "ANTHROPIC_MODEL": $model,
     "ANTHROPIC_BASE_URL": $base,
-    "ANTHROPIC_AUTH_TOKEN": $token,
     "ANTHROPIC_DEFAULT_OPUS_MODEL": $opus,
     "ANTHROPIC_DEFAULT_SONNET_MODEL": $sonnet,
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": $haiku,
     "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
-    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+    "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": $ttl
   }')
-
-meta_json=$(jq -n \
-  --arg method "pat" \
-  --argjson expiry "$PAT_EXPIRY_EPOCH" \
-  --argjson lifetime "$PAT_LIFETIME_SECONDS" \
-  '{auth_method: $method, pat_expiry_epoch: $expiry, pat_lifetime_seconds: $lifetime}')
 
 if [[ -f "$SETTINGS_FILE" ]]; then
   tmpfile=$(mktemp "${SETTINGS_FILE}.XXXXXX")
-  jq --argjson new_env "$env_json" --argjson meta "$meta_json" \
-    '.env = ((.env // {}) * $new_env) | ._fmapi_meta = $meta' \
+  _CLEANUP_FILES+=("$tmpfile")
+  jq --argjson new_env "$env_json" --arg helper "$HELPER_FILE" \
+    '.env = ((.env // {}) * $new_env | del(.ANTHROPIC_AUTH_TOKEN)) | .apiKeyHelper = $helper | del(._fmapi_meta)' \
     "$SETTINGS_FILE" > "$tmpfile"
   chmod 600 "$tmpfile"
   mv "$tmpfile" "$SETTINGS_FILE"
 else
-  jq -n --argjson env "$env_json" --argjson meta "$meta_json" \
-    '{"env": $env, "_fmapi_meta": $meta}' > "$SETTINGS_FILE"
+  jq -n --argjson env "$env_json" --arg helper "$HELPER_FILE" \
+    '{"apiKeyHelper": $helper, "env": $env}' > "$SETTINGS_FILE"
   chmod 600 "$SETTINGS_FILE"
 fi
 success "Settings written to ${SETTINGS_FILE}."
 
-# ── Add shell wrapper ────────────────────────────────────────────────────────
-echo -e "\n${BOLD}Shell wrapper${RESET}"
+# ── Write API key helper script ──────────────────────────────────────────────
+echo -e "\n${BOLD}API key helper${RESET}"
 
-RC_FILE="$HOME/.zshrc"
-[[ "$SHELL" != */zsh ]] && RC_FILE="$HOME/.bashrc"
+cat > "$HELPER_FILE" << 'HELPER_SCRIPT'
+#!/bin/sh
+set -eu
+umask 077
 
-BEGIN_MARKER="# >>> ${CMD_NAME} wrapper >>>"
-END_MARKER="# <<< ${CMD_NAME} wrapper <<<"
+# Temp file cleanup on exit/interrupt
+_cleanup_tmp=""
+_cleanup() { [ -n "$_cleanup_tmp" ] && rm -f "$_cleanup_tmp" 2>/dev/null || true; }
+trap _cleanup EXIT INT TERM
 
-# Remove legacy wrapper names if present
-for OLD_NAME in "claude_fmapi" "dbx-fmapi-claude"; do
-  OLD_MARKER="# >>> ${OLD_NAME} wrapper >>>"
-  OLD_END="# <<< ${OLD_NAME} wrapper <<<"
-  if grep -qF "$OLD_MARKER" "$RC_FILE" 2>/dev/null; then
-    sed -i '' "/$OLD_MARKER/,/$OLD_END/d" "$RC_FILE"
-    info "Removed old ${OLD_NAME} wrapper."
-  fi
-done
+PROFILE="__PROFILE__"
+HOST="__HOST__"
+LIFETIME="__LIFETIME__"
+CACHE_FILE="__CACHE_FILE__"
 
-# Remove previous fmapi-claude wrapper if the command name changed
-if [[ "$CMD_NAME" != "fmapi-claude" ]]; then
-  OLD_DBX_MARKER="# >>> fmapi-claude wrapper >>>"
-  OLD_DBX_END="# <<< fmapi-claude wrapper <<<"
-  if grep -qF "$OLD_DBX_MARKER" "$RC_FILE" 2>/dev/null; then
-    sed -i '' "/$OLD_DBX_MARKER/,/$OLD_DBX_END/d" "$RC_FILE"
-    info "Removed old fmapi-claude wrapper."
-  fi
-fi
-
-if grep -qF "$BEGIN_MARKER" "$RC_FILE" 2>/dev/null; then
-  OLD_PROFILE=$(sed -n "/$BEGIN_MARKER/,/$END_MARKER/{ s/.*profile=\"\([^\"]*\)\".*/\1/p; }" "$RC_FILE" | head -1)
-  if [[ -n "$OLD_PROFILE" && "$OLD_PROFILE" != "$DATABRICKS_PROFILE" ]]; then
-    info "Replacing profile ${OLD_PROFILE} → ${DATABRICKS_PROFILE} in ${RC_FILE} ..."
-  else
-    info "Updating wrapper in ${RC_FILE} ..."
-  fi
-  sed -i '' "/$BEGIN_MARKER/,/$END_MARKER/d" "$RC_FILE"
-else
-  info "Adding wrapper to ${RC_FILE} ..."
-fi
-
-cat >> "$RC_FILE" << 'WRAPPER'
-
-# >>> CMD_NAME_PLACEHOLDER wrapper >>>
-CMD_NAME_PLACEHOLDER() {
-  local sf="SETTINGS_FILE_PLACEHOLDER"
-  [[ ! -f "$sf" ]] && { command claude "$@"; return; }
-
-  local token host profile="PROFILE_PLACEHOLDER"
-  token=$(jq -r '.env.ANTHROPIC_AUTH_TOKEN // empty' "$sf")
-  host=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$sf")
-  host="${host%/serving-endpoints/anthropic}"
-
-  # Check PAT expiry via local clock (no HTTP call)
-  local expiry lifetime now
-  expiry=$(jq -r '._fmapi_meta.pat_expiry_epoch // 0' "$sf")
-  lifetime=$(jq -r '._fmapi_meta.pat_lifetime_seconds // 86400' "$sf")
+get_cached_token() {
+  [ -f "$CACHE_FILE" ] || return 1
+  token=$(jq -r '.token // empty' "$CACHE_FILE" 2>/dev/null) || return 1
+  expiry=$(jq -r '.expiry_epoch // 0' "$CACHE_FILE" 2>/dev/null) || return 1
   now=$(date +%s)
+  # Return cached token if still valid with 5-minute buffer
+  if [ -n "$token" ] && [ "$now" -lt "$((expiry - 300))" ]; then
+    echo "$token"
+    return 0
+  fi
+  return 1
+}
 
-  if [[ -z "$token" ]] || (( now >= expiry )); then
-    echo "[CMD_NAME_PLACEHOLDER] PAT expired, creating new one ..."
-
-    # Ensure OAuth session is valid for PAT creation
-    local oauth_tok=""
-    oauth_tok=$(databricks auth token --profile "$profile" --output json 2>/dev/null | jq -r '.access_token // empty') || true
-    if [[ -z "$oauth_tok" ]]; then
-      echo "[CMD_NAME_PLACEHOLDER] OAuth login required ..."
-      databricks auth login --host "$host" --profile "$profile"
-    fi
-
-    # Revoke old FMAPI PATs before creating new one
-    databricks tokens list --profile "$profile" --output json 2>/dev/null \
-      | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null \
-      | while IFS= read -r tid; do
-          [[ -n "$tid" ]] && databricks tokens delete "$tid" --profile "$profile" 2>/dev/null || true
-        done
-
-    local pat_json new_token new_expiry
-    pat_json=$(databricks tokens create \
-      --lifetime-seconds "$lifetime" \
-      --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
-      --profile "$profile" \
-      --output json)
-    new_token=$(echo "$pat_json" | jq -r '.token_value // empty')
-
-    if [[ -n "$new_token" ]]; then
-      new_expiry=$(( $(date +%s) + lifetime ))
-      local tmpfile
-      tmpfile=$(mktemp "${sf}.XXXXXX")
-      jq --arg tok "$new_token" --argjson exp "$new_expiry" \
-        '.env.ANTHROPIC_AUTH_TOKEN = $tok | ._fmapi_meta.pat_expiry_epoch = $exp' \
-        "$sf" > "$tmpfile" && chmod 600 "$tmpfile" && mv "$tmpfile" "$sf"
-      echo "[CMD_NAME_PLACEHOLDER] PAT refreshed (expires: $(date -r "$new_expiry" '+%Y-%m-%d %H:%M %Z'))."
-    else
-      echo "[CMD_NAME_PLACEHOLDER] Error: could not create PAT." >&2
-      return 1
-    fi
+create_pat() {
+  # Check OAuth session
+  oauth_tok=$(databricks auth token --profile "$PROFILE" --output json 2>/dev/null \
+    | jq -r '.access_token // empty') || true
+  if [ -z "$oauth_tok" ]; then
+    echo "FMAPI: OAuth session expired. Run: databricks auth login --host $HOST --profile $PROFILE" >&2
+    exit 1
   fi
 
-  command claude "$@"
-}
-# <<< CMD_NAME_PLACEHOLDER wrapper <<<
-WRAPPER
+  # Revoke old FMAPI PATs before creating new one
+  databricks tokens list --profile "$PROFILE" --output json 2>/dev/null \
+    | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null \
+    | while IFS= read -r tid; do
+        [ -n "$tid" ] && databricks tokens delete "$tid" --profile "$PROFILE" 2>/dev/null || true
+      done
 
-# Replace placeholders with actual values
-sed -i '' "s|CMD_NAME_PLACEHOLDER|${CMD_NAME}|g; s|SETTINGS_FILE_PLACEHOLDER|${SETTINGS_FILE}|g; s|PROFILE_PLACEHOLDER|${DATABRICKS_PROFILE}|g" "$RC_FILE"
-success "Wrapper written to ${RC_FILE}."
+  # Create new PAT
+  pat_json=$(databricks tokens create \
+    --lifetime-seconds "$LIFETIME" \
+    --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
+    --profile "$PROFILE" \
+    --output json)
+  token=$(echo "$pat_json" | jq -r '.token_value // empty')
+
+  if [ -z "$token" ]; then
+    echo "FMAPI: Failed to create PAT." >&2
+    exit 1
+  fi
+
+  # Write cache atomically
+  expiry=$(($(date +%s) + LIFETIME))
+  tmpfile=$(mktemp "${CACHE_FILE}.XXXXXX")
+  _cleanup_tmp="$tmpfile"
+  jq -n --arg tok "$token" --argjson exp "$expiry" --argjson lt "$LIFETIME" \
+    '{token: $tok, expiry_epoch: $exp, lifetime_seconds: $lt}' > "$tmpfile"
+  chmod 600 "$tmpfile"
+  mv "$tmpfile" "$CACHE_FILE"
+  _cleanup_tmp=""
+
+  echo "$token"
+}
+
+# Main: use cached token or create a new one
+get_cached_token || create_pat
+HELPER_SCRIPT
+
+sed -i '' "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g; s|__LIFETIME__|${PAT_LIFETIME_SECONDS}|g; s|__CACHE_FILE__|${CACHE_FILE}|g" "$HELPER_FILE"
+chmod 700 "$HELPER_FILE"
+success "Helper script written to ${HELPER_FILE}."
+
+# ── Seed cache file ──────────────────────────────────────────────────────────
+info "Seeding PAT cache ..."
+seed_tmp=$(mktemp "${CACHE_FILE}.XXXXXX")
+_CLEANUP_FILES+=("$seed_tmp")
+jq -n --arg tok "$INITIAL_PAT" --argjson exp "$PAT_EXPIRY_EPOCH" --argjson lt "$PAT_LIFETIME_SECONDS" \
+  '{token: $tok, expiry_epoch: $exp, lifetime_seconds: $lt}' > "$seed_tmp"
+chmod 600 "$seed_tmp"
+mv "$seed_tmp" "$CACHE_FILE"
+success "Cache seeded at ${CACHE_FILE}."
+
+# ── Remove legacy shell wrappers ─────────────────────────────────────────────
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+  [[ -f "$rc" ]] || continue
+  while grep -q '# >>> .* wrapper >>>' "$rc" 2>/dev/null; do
+    wrapper_cmd=$(grep -m1 '# >>> .* wrapper >>>' "$rc" | sed 's/^# >>> \(.*\) wrapper >>>$/\1/')
+    begin_marker="# >>> ${wrapper_cmd} wrapper >>>"
+    end_marker="# <<< ${wrapper_cmd} wrapper <<<"
+    sed -i '' "/${begin_marker}/,/${end_marker}/d" "$rc"
+    info "Removed legacy ${wrapper_cmd} wrapper from ${rc}."
+  done
+done
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
@@ -652,6 +680,6 @@ echo -e "  ${DIM}Opus${RESET}       ${BOLD}${ANTHROPIC_OPUS_MODEL}${RESET}"
 echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
 echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
 echo -e "  ${DIM}Auth${RESET}       ${BOLD}PAT (${PAT_LIFETIME_LABEL}, expires $(date -r "$PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))${RESET}"
-echo -e "  ${DIM}Command${RESET}    ${BOLD}${CMD_NAME}${RESET}"
+echo -e "  ${DIM}Helper${RESET}     ${BOLD}${HELPER_FILE}${RESET}"
 echo -e "  ${DIM}Settings${RESET}   ${BOLD}${SETTINGS_FILE}${RESET}"
-echo -e "\n  Run ${CYAN}${BOLD}source ${RC_FILE}${RESET} or open a ${BOLD}new terminal${RESET}, then run ${CYAN}${BOLD}${CMD_NAME}${RESET} to start.\n"
+echo -e "\n  Run ${CYAN}${BOLD}claude${RESET} to start.\n"

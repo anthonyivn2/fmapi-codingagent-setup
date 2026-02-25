@@ -9,3 +9,5 @@ wheels/
 # Virtual environments
 .venv
 .claude/settings.json
+.claude/fmapi-key-helper.sh
+.claude/.fmapi-pat-cache
