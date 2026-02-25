@@ -518,15 +518,15 @@ _cleanup_tmp=""
 _cleanup() { [ -n "$_cleanup_tmp" ] && rm -f "$_cleanup_tmp" 2>/dev/null || true; }
 trap _cleanup EXIT INT TERM
 
-PROFILE="__PROFILE__"
-HOST="__HOST__"
-LIFETIME="__LIFETIME__"
-CACHE_FILE="__CACHE_FILE__"
+FMAPI_PROFILE="__PROFILE__"
+FMAPI_HOST="__HOST__"
+FMAPI_LIFETIME="__LIFETIME__"
+FMAPI_CACHE_FILE="__CACHE_FILE__"
 
 get_cached_token() {
-  [ -f "$CACHE_FILE" ] || return 1
-  token=$(jq -r '.token // empty' "$CACHE_FILE" 2>/dev/null) || return 1
-  expiry=$(jq -r '.expiry_epoch // 0' "$CACHE_FILE" 2>/dev/null) || return 1
+  [ -f "$FMAPI_CACHE_FILE" ] || return 1
+  token=$(jq -r '.token // empty' "$FMAPI_CACHE_FILE" 2>/dev/null) || return 1
+  expiry=$(jq -r '.expiry_epoch // 0' "$FMAPI_CACHE_FILE" 2>/dev/null) || return 1
   now=$(date +%s)
   # Return cached token if still valid with 5-minute buffer
   if [ -n "$token" ] && [ "$now" -lt "$((expiry - 300))" ]; then
@@ -538,25 +538,43 @@ get_cached_token() {
 
 create_pat() {
   # Check OAuth session
-  oauth_tok=$(databricks auth token --profile "$PROFILE" --output json 2>/dev/null \
+  oauth_tok=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
     | jq -r '.access_token // empty') || true
   if [ -z "$oauth_tok" ]; then
-    echo "FMAPI: OAuth session expired. Run: databricks auth login --host $HOST --profile $PROFILE" >&2
-    exit 1
+    # Determine best output destination: /dev/tty for direct terminal visibility,
+    # fall back to stderr for portability (Windows, CI, non-interactive sessions)
+    if [ -e /dev/tty ]; then
+      _reauth_out="/dev/tty"
+    else
+      _reauth_out="/dev/stderr"
+    fi
+    echo "FMAPI: OAuth session expired — attempting re-authentication ..." > "$_reauth_out"
+    if databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" > "$_reauth_out" 2>&1; then
+      oauth_tok=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
+        | jq -r '.access_token // empty') || true
+      if [ -z "$oauth_tok" ]; then
+        echo "FMAPI: Re-authentication failed. Run manually: databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" > "$_reauth_out"
+        exit 1
+      fi
+      echo "FMAPI: Re-authentication successful." > "$_reauth_out"
+    else
+      echo "FMAPI: Re-authentication failed. Run manually: databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" > "$_reauth_out"
+      exit 1
+    fi
   fi
 
   # Revoke old FMAPI PATs before creating new one
-  databricks tokens list --profile "$PROFILE" --output json 2>/dev/null \
+  databricks tokens list --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
     | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null \
     | while IFS= read -r tid; do
-        [ -n "$tid" ] && databricks tokens delete "$tid" --profile "$PROFILE" 2>/dev/null || true
+        [ -n "$tid" ] && databricks tokens delete "$tid" --profile "$FMAPI_PROFILE" 2>/dev/null || true
       done
 
   # Create new PAT
   pat_json=$(databricks tokens create \
-    --lifetime-seconds "$LIFETIME" \
+    --lifetime-seconds "$FMAPI_LIFETIME" \
     --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
-    --profile "$PROFILE" \
+    --profile "$FMAPI_PROFILE" \
     --output json)
   token=$(echo "$pat_json" | jq -r '.token_value // empty')
 
@@ -566,13 +584,13 @@ create_pat() {
   fi
 
   # Write cache atomically
-  expiry=$(($(date +%s) + LIFETIME))
-  tmpfile=$(mktemp "${CACHE_FILE}.XXXXXX")
+  expiry=$(($(date +%s) + FMAPI_LIFETIME))
+  tmpfile=$(mktemp "${FMAPI_CACHE_FILE}.XXXXXX")
   _cleanup_tmp="$tmpfile"
-  jq -n --arg tok "$token" --argjson exp "$expiry" --argjson lt "$LIFETIME" \
+  jq -n --arg tok "$token" --argjson exp "$expiry" --argjson lt "$FMAPI_LIFETIME" \
     '{token: $tok, expiry_epoch: $exp, lifetime_seconds: $lt}' > "$tmpfile"
   chmod 600 "$tmpfile"
-  mv "$tmpfile" "$CACHE_FILE"
+  mv "$tmpfile" "$FMAPI_CACHE_FILE"
   _cleanup_tmp=""
 
   echo "$token"
