@@ -33,9 +33,11 @@ The script will prompt you for:
 |---|---|---|
 | **Workspace URL** | Text input | Your Databricks workspace URL (e.g. `https://my-workspace.cloud.databricks.com`) |
 | **CLI profile name** | Text input | Name for the Databricks CLI authentication profile (e.g. `my-profile`) |
-| **Model** | Text input | The model to use. Defaults to `databricks-claude-opus-4-6` |
+| **Model** | Text input | The primary model to use. Defaults to `databricks-claude-opus-4-6` |
+| **Sonnet model** | Text input | The Sonnet model for lighter tasks. Defaults to `databricks-claude-sonnet-4-6` |
+| **Haiku model** | Text input | The Haiku model for fast, low-cost tasks. Defaults to `databricks-claude-haiku-4-5` |
 | **Command name** | Arrow-key selector | The shell command to invoke Claude Code with FMAPI (see [Command name options](#command-name-options) below) |
-| **Settings location** | Arrow-key selector | Where to write the `.claude/settings.json` file (current directory, home directory, or a custom path) |
+| **Settings location** | Arrow-key selector | Where to write the `.claude/settings.json` file (home directory, current directory, or a custom path) |
 | **PAT lifetime** | Arrow-key selector | How long the Personal Access Token should last (1 day, 3 days, 5 days, or 7 days) |
 
 > The **Command name** and **Settings location** prompts use an interactive arrow-key selector &mdash; use the up/down arrow keys to navigate and Enter to confirm.
@@ -43,7 +45,7 @@ The script will prompt you for:
 Once complete, open a new terminal (or `source ~/.zshrc`) and run:
 
 ```bash
-fmapi-claude   # default, or whatever command name you chose
+claude   # default, or whatever command name you chose
 ```
 
 ### Command name options
@@ -52,8 +54,8 @@ During setup you can choose what command to use:
 
 | Option | Description |
 |---|---|
-| `fmapi-claude` | **Default.** Adds a separate command alongside the original `claude` command. |
-| `claude` | Overrides the default `claude` command so every invocation goes through FMAPI with automatic token refresh. The underlying `claude` binary is still called via the wrapper. |
+| `claude` | **Default.** Overrides the default `claude` command so every invocation goes through FMAPI with automatic token refresh. The underlying `claude` binary is still called via the wrapper. |
+| `fmapi-claude` | Adds a separate command alongside the original `claude` command. |
 | Custom name | Use any name you like (e.g. `dbx-claude`, `my-claude`). Must start with a letter or underscore and contain only letters, numbers, hyphens, and underscores. |
 
 If you re-run the script and pick a different command name, the old wrapper is automatically removed.
@@ -79,36 +81,36 @@ Creates or merges environment variables into your Claude Code settings file at t
 | `ANTHROPIC_BASE_URL` | `<workspace-url>/serving-endpoints/anthropic` |
 | `ANTHROPIC_AUTH_TOKEN` | Your Databricks Personal Access Token (PAT) |
 | `ANTHROPIC_DEFAULT_OPUS_MODEL` | `databricks-claude-opus-4-6` |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | `databricks-claude-sonnet-4-5` |
-| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `databricks-claude-haiku-4-5` |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | Selected Sonnet model (default: `databricks-claude-sonnet-4-6`) |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Selected Haiku model (default: `databricks-claude-haiku-4-5`) |
 | `ANTHROPIC_CUSTOM_HEADERS` | `x-databricks-use-coding-agent-mode: true` |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `1` |
 
 If the settings file already exists, the script merges the new `env` values into it without overwriting other settings.
 
-#### 4. Adds the `fmapi-claude` shell wrapper
+#### 4. Adds a shell wrapper
 
-Appends a shell function to your `~/.zshrc` (or `~/.bashrc`) that wraps the `claude` command with automatic token refresh logic.
+Appends a shell function (named `claude` by default, or your chosen command name) to your `~/.zshrc` (or `~/.bashrc`) that wraps the `claude` binary with automatic token refresh logic.
 
 ### Using the wrapper command
 
-The wrapper (default: `fmapi-claude`, or whatever name you chose during setup) is a drop-in replacement for the `claude` command. It accepts all the same arguments and flags &mdash; the only difference is that it checks your Databricks token before each invocation and refreshes it if it has expired.
+The wrapper (default: `claude`, or whatever name you chose during setup) is a drop-in replacement for the `claude` command. It accepts all the same arguments and flags &mdash; the only difference is that it checks your Databricks token before each invocation and refreshes it if it has expired.
 
 ```bash
 # Start an interactive session
-fmapi-claude
+claude
 
 # Run a one-shot prompt
-fmapi-claude -p "explain this codebase"
+claude -p "explain this codebase"
 
 # Resume a conversation
-fmapi-claude --continue
+claude --continue
 
 # Any other claude flags work as usual
-fmapi-claude --help
+claude --help
 ```
 
-> **Tip:** If you chose `claude` as the command name, just replace `fmapi-claude` with `claude` in the examples above &mdash; every `claude` invocation will automatically refresh tokens.
+> **Tip:** If you chose `fmapi-claude` or a custom command name, replace `claude` with that name in the examples above.
 
 #### How token refresh works
 
@@ -120,7 +122,7 @@ Each time you run the wrapper command:
 4. Revokes any old FMAPI PATs from the workspace.
 5. Creates a new PAT with the configured lifetime and writes it back into `settings.json`.
 
-If you use the plain `claude` command instead, it will still work as long as the PAT in `settings.json` hasn't expired &mdash; but it won't auto-refresh.
+If you chose a separate command name like `fmapi-claude`, the plain `claude` command will still work as long as the PAT in `settings.json` hasn't expired &mdash; but it won't auto-refresh.
 
 ### Available Models
 
@@ -129,8 +131,9 @@ Models available through FMAPI depend on what is enabled in your Databricks work
 | Model ID | Description |
 |---|---|
 | `databricks-claude-opus-4-6` | Claude Opus 4.6 (default) |
+| `databricks-claude-sonnet-4-6` | Claude Sonnet 4.6 (default Sonnet) |
 | `databricks-claude-sonnet-4-5` | Claude Sonnet 4.5 |
-| `databricks-claude-haiku-4-5` | Claude Haiku 4.5 |
+| `databricks-claude-haiku-4-5` | Claude Haiku 4.5 (default Haiku) |
 
 ### Uninstalling
 
@@ -152,7 +155,7 @@ Re-running `--uninstall` when nothing is installed is safe and will print "Nothi
 
 You can safely re-run `setup-fmapi-claudecode.sh` at any time to:
 
-- Update the workspace URL, profile, or model
+- Update the workspace URL, profile, or models (Opus, Sonnet, Haiku)
 - Refresh an expired token
 - Repair a missing or corrupted settings file
 

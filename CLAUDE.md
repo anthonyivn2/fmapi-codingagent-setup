@@ -24,7 +24,7 @@ CLAUDE.md                    # This file
 ## Key Concepts
 
 - **`setup-fmapi-claudecode.sh`** — Interactive bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, creates a Personal Access Token (PAT), writes `.claude/settings.json`, and adds a shell wrapper to the user's RC file. Uses an interactive arrow-key selector for multi-choice prompts (command name, settings location, PAT lifetime). Supports `--uninstall` to cleanly remove all FMAPI artifacts (wrappers, settings keys, and optionally PATs).
-- **`fmapi-claude`** — The default shell function name injected into `~/.zshrc` or `~/.bashrc` that wraps the `claude` command with automatic Databricks PAT refresh. Users can choose to override `claude` directly or use a custom command name during setup.
+- **`claude` / `fmapi-claude`** — The shell function injected into `~/.zshrc` or `~/.bashrc` that wraps the `claude` command with automatic Databricks PAT refresh. The default is `claude` (overrides the built-in command); users can also choose `fmapi-claude` as a separate command or enter a custom name during setup.
 - **`.claude/settings.json`** — Claude Code configuration file containing environment variables (`ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, etc.) and `_fmapi_meta` (PAT expiry and lifetime) that route requests through Databricks FMAPI.
 
 ## Development Guidelines

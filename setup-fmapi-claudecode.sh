@@ -507,7 +507,7 @@ env_json=$(jq -n \
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-6",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": $sonnet,
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": $haiku,
-    "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
+x    "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
   }')
 
