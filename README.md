@@ -115,6 +115,7 @@ Setup options (skip interactive prompts):
   --opus MODEL          Opus model (default: databricks-claude-opus-4-6)
   --sonnet MODEL        Sonnet model (default: databricks-claude-sonnet-4-6)
   --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
+  --ttl MINUTES         Token refresh interval in minutes (default: 30, max: 60)
   --settings-location PATH
                         Where to write settings: "home", "cwd", or a custom path
 ```
@@ -144,7 +145,7 @@ Creates or merges environment variables into your Claude Code settings file at t
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `env` | Selected Haiku model (default: `databricks-claude-haiku-4-5`) |
 | `ANTHROPIC_CUSTOM_HEADERS` | `env` | `x-databricks-use-coding-agent-mode: true` |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `env` | `1` |
-| `CLAUDE_CODE_API_KEY_HELPER_TTL_MS` | `env` | `3000000` (50 minutes &mdash; tokens refreshed before 1-hour OAuth expiry) |
+| `CLAUDE_CODE_API_KEY_HELPER_TTL_MS` | `env` | `1800000` (30 minutes &mdash; tokens refreshed before 1-hour OAuth expiry; configurable via `--ttl`) |
 
 If the settings file already exists, the script merges the new values into it without overwriting other settings.
 
@@ -158,7 +159,7 @@ The generated helper script and settings file are restricted to owner-only permi
 
 ### How Token Management Works
 
-Claude Code invokes the helper script every 50 minutes (configurable via `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`). The helper calls `databricks auth token` which returns the current OAuth access token, automatically refreshing it if needed using the stored refresh token. If the refresh token has expired (due to extended inactivity), the helper falls back to `databricks auth login` to trigger browser-based re-authentication.
+Claude Code invokes the helper script every 30 minutes by default (configurable via `--ttl` at setup time, max 60 minutes). The helper calls `databricks auth token` which returns the current OAuth access token, automatically refreshing it if needed using the stored refresh token. If the refresh token has expired (due to extended inactivity), the helper falls back to `databricks auth login` to trigger browser-based re-authentication.
 
 ### Available Models
 

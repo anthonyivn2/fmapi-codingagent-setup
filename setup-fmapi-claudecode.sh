@@ -18,7 +18,45 @@ YELLOW='\033[33m' CYAN='\033[36m' RESET='\033[0m'
 info()    { echo -e "  ${CYAN}::${RESET} $1"; }
 success() { echo -e "  ${GREEN}${BOLD}ok${RESET} $1"; }
 error()   { echo -e "\n  ${RED}${BOLD}!! ERROR${RESET}${RED} $1${RESET}\n" >&2; }
-# ── Interactive selector ─────────────────────────────────────────────────────
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+
+# Check if a value exists in an array (bash 3.x compatible)
+# Usage: array_contains "value" "${array[@]}"
+array_contains() {
+  local needle="$1"; shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# Require a command or exit with an error message
+require_cmd() {
+  local cmd="$1" msg="$2"
+  command -v "$cmd" &>/dev/null || { error "$msg"; exit 1; }
+}
+
+# Prompt for a value, respecting CLI flags and non-interactive mode.
+# Usage: prompt_value VAR_NAME "Label" "cli_value" "default_value"
+prompt_value() {
+  local var_name="$1" label="$2" cli_val="$3" default="$4"
+  local _pv_input=""
+  if [[ -n "$cli_val" ]]; then
+    printf -v "$var_name" '%s' "$cli_val"
+  elif [[ "$NON_INTERACTIVE" == true ]]; then
+    printf -v "$var_name" '%s' "$default"
+  elif [[ -n "$default" ]]; then
+    read -rp "$(echo -e "  ${CYAN}?${RESET} ${label} ${DIM}[${default}]${RESET}: ")" _pv_input
+    printf -v "$var_name" '%s' "${_pv_input:-$default}"
+  else
+    read -rp "$(echo -e "  ${CYAN}?${RESET} ${label}: ")" _pv_input
+    printf -v "$var_name" '%s' "$_pv_input"
+  fi
+}
+
+# Interactive selector
 # Usage: select_option "Prompt" "label1|desc1" "label2|desc2" ...
 # Sets SELECT_RESULT to the 1-based index of the chosen option.
 select_option() {
@@ -96,18 +134,6 @@ select_option() {
   SELECT_RESULT=$(( cur + 1 ))
 }
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-# Check if a value exists in an array (bash 3.x compatible)
-# Usage: array_contains "value" "${array[@]}"
-array_contains() {
-  local needle="$1"; shift
-  local item
-  for item in "$@"; do
-    [[ "$item" == "$needle" ]] && return 0
-  done
-  return 1
-}
-
 # ── Config discovery ──────────────────────────────────────────────────────────
 # Discover existing FMAPI configuration from settings and helper files.
 # Sets CFG_* variables for use by callers.
@@ -115,6 +141,7 @@ discover_config() {
   CFG_FOUND=false
   CFG_HOST="" CFG_PROFILE=""
   CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
+  CFG_TTL=""
   CFG_SETTINGS_FILE="" CFG_HELPER_FILE=""
 
   # Find the first settings file with FMAPI config
@@ -145,16 +172,18 @@ discover_config() {
     CFG_SONNET=$(jq -r '.env.ANTHROPIC_DEFAULT_SONNET_MODEL // empty' "$abs_path" 2>/dev/null) || true
     CFG_HAIKU=$(jq -r '.env.ANTHROPIC_DEFAULT_HAIKU_MODEL // empty' "$abs_path" 2>/dev/null) || true
 
+    local cfg_ttl_ms=""
+    cfg_ttl_ms=$(jq -r '.env.CLAUDE_CODE_API_KEY_HELPER_TTL_MS // empty' "$abs_path" 2>/dev/null) || true
+    [[ -n "$cfg_ttl_ms" ]] && CFG_TTL=$(( cfg_ttl_ms / 60000 ))
+
     break  # Use first match
   done
 }
 
-# ── Status ────────────────────────────────────────────────────────────────────
+# ── Commands ──────────────────────────────────────────────────────────────────
+
 do_status() {
-  if ! command -v jq &>/dev/null; then
-    error "jq is required for status. Install with: brew install jq"
-    exit 1
-  fi
+  require_cmd jq "jq is required for status. Install with: brew install jq"
 
   discover_config
 
@@ -176,6 +205,9 @@ do_status() {
   echo -e "  ${DIM}Opus${RESET}       ${BOLD}${CFG_OPUS:-unknown}${RESET}"
   echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${CFG_SONNET:-unknown}${RESET}"
   echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${CFG_HAIKU:-unknown}${RESET}"
+  if [[ -n "$CFG_TTL" ]]; then
+    echo -e "  ${DIM}TTL${RESET}        ${BOLD}${CFG_TTL}m${RESET}"
+  fi
   echo ""
 
   # ── Auth ─────────────────────────────────────────────────────────────────
@@ -202,17 +234,9 @@ do_status() {
   echo ""
 }
 
-# ── Reauth ────────────────────────────────────────────────────────────────────
 do_reauth() {
-  if ! command -v jq &>/dev/null; then
-    error "jq is required for reauth. Install with: brew install jq"
-    exit 1
-  fi
-
-  if ! command -v databricks &>/dev/null; then
-    error "Databricks CLI is required for reauth. Install with: brew tap databricks/tap && brew install databricks"
-    exit 1
-  fi
+  require_cmd jq "jq is required for reauth. Install with: brew install jq"
+  require_cmd databricks "Databricks CLI is required for reauth. Install with: brew tap databricks/tap && brew install databricks"
 
   discover_config
 
@@ -240,15 +264,10 @@ do_reauth() {
   fi
 }
 
-# ── Uninstall ────────────────────────────────────────────────────────────────
 do_uninstall() {
   echo -e "\n${BOLD}  Claude Code x Databricks FMAPI — Uninstall${RESET}\n"
 
-  # Require jq
-  if ! command -v jq &>/dev/null; then
-    error "jq is required for uninstall. Install with: brew install jq"
-    exit 1
-  fi
+  require_cmd jq "jq is required for uninstall. Install with: brew install jq"
 
   # ── Discover FMAPI artifacts ──────────────────────────────────────────────
   declare -a helper_scripts=()
@@ -384,17 +403,16 @@ do_uninstall() {
   echo -e "\n${GREEN}${BOLD}  Uninstall complete!${RESET}\n"
 }
 
-# ── CLI flag parsing ──────────────────────────────────────────────────────────
-CLI_HOST="" CLI_PROFILE="" CLI_MODEL="" CLI_OPUS="" CLI_SONNET="" CLI_HAIKU=""
-CLI_SETTINGS_LOCATION=""
-ACTION=""
-
 show_help() {
   cat <<'HELPTEXT'
 Usage: bash setup-fmapi-claudecode.sh [OPTIONS]
 
-Sets up Claude Code to use Databricks Foundation Model API.
-Installs prerequisites automatically (Homebrew, jq, Claude Code, Databricks CLI).
+Sets up Claude Code to use Databricks Foundation Model API (FMAPI).
+
+Prerequisites:
+  - macOS with Homebrew (or install manually: jq, databricks CLI)
+  - A Databricks workspace with Foundation Model API enabled
+  - Access to Claude models via your Databricks workspace
 
 Commands:
   --status              Show FMAPI configuration health dashboard
@@ -403,301 +421,267 @@ Commands:
   -h, --help            Show this help message
 
 Setup options (skip interactive prompts):
-  --host URL            Databricks workspace URL (e.g. https://my-workspace.cloud.databricks.com)
-  --profile NAME        Databricks CLI profile name
+  --host URL            Databricks workspace URL (required for non-interactive)
+  --profile NAME        CLI profile name (default: fmapi-claudecode-profile)
   --model MODEL         Primary model (default: databricks-claude-opus-4-6)
   --opus MODEL          Opus model (default: databricks-claude-opus-4-6)
   --sonnet MODEL        Sonnet model (default: databricks-claude-sonnet-4-6)
   --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
-  --settings-location PATH
-                        Where to write settings: "home", "cwd", or a custom path
+  --ttl MINUTES         Token refresh interval in minutes (default: 30, max: 60)
+  --settings-location   Where to write settings: "home", "cwd", or path (default: home)
 
 Examples:
-  # Interactive setup (prompts for all values)
+  # Interactive setup — prompts for everything
   bash setup-fmapi-claudecode.sh
 
-  # Non-interactive setup (all values from flags)
-  bash setup-fmapi-claudecode.sh --host https://my-workspace.cloud.databricks.com --profile my-profile
+  # Minimal non-interactive — only host required, rest uses defaults
+  bash setup-fmapi-claudecode.sh --host https://my-workspace.cloud.databricks.com
+
+  # Non-interactive with custom profile and model
+  bash setup-fmapi-claudecode.sh --host https://my-workspace.cloud.databricks.com \
+    --profile my-profile --model databricks-claude-sonnet-4-6
 
   # Check configuration health
   bash setup-fmapi-claudecode.sh --status
 
-  # Re-authenticate OAuth session
+  # Re-authenticate expired OAuth session
   bash setup-fmapi-claudecode.sh --reauth
 
-  # Uninstall
+  # Uninstall all FMAPI artifacts
   bash setup-fmapi-claudecode.sh --uninstall
+
+Troubleshooting:
+  OAuth expired        Run: bash setup-fmapi-claudecode.sh --reauth
+  "No config found"    Run setup first (without --status/--reauth)
+  Wrong workspace URL  URL must start with https:// and have no trailing slash
+  Permission denied    Helper script needs execute permission (chmod 700)
+  Model not found      Check available models in your Databricks workspace
 HELPTEXT
   exit 0
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -h|--help)      show_help ;;
-    --status)       ACTION="status"; shift ;;
-    --reauth)       ACTION="reauth"; shift ;;
-    --uninstall)    ACTION="uninstall"; shift ;;
-    --host)         CLI_HOST="${2:-}"; [[ -z "$CLI_HOST" ]] && { error "--host requires a URL."; exit 1; }; shift 2 ;;
-    --profile)      CLI_PROFILE="${2:-}"; [[ -z "$CLI_PROFILE" ]] && { error "--profile requires a name."; exit 1; }; shift 2 ;;
-    --model)        CLI_MODEL="${2:-}"; [[ -z "$CLI_MODEL" ]] && { error "--model requires a value."; exit 1; }; shift 2 ;;
-    --opus)         CLI_OPUS="${2:-}"; [[ -z "$CLI_OPUS" ]] && { error "--opus requires a value."; exit 1; }; shift 2 ;;
-    --sonnet)       CLI_SONNET="${2:-}"; [[ -z "$CLI_SONNET" ]] && { error "--sonnet requires a value."; exit 1; }; shift 2 ;;
-    --haiku)        CLI_HAIKU="${2:-}"; [[ -z "$CLI_HAIKU" ]] && { error "--haiku requires a value."; exit 1; }; shift 2 ;;
-    --settings-location) CLI_SETTINGS_LOCATION="${2:-}"; [[ -z "$CLI_SETTINGS_LOCATION" ]] && { error "--settings-location requires a value."; exit 1; }; shift 2 ;;
-    *)              error "Unknown option: $1"; echo "  Run with --help for usage." >&2; exit 1 ;;
-  esac
-done
+# ── Setup functions ───────────────────────────────────────────────────────────
 
-# ── Dispatch commands ─────────────────────────────────────────────────────────
-case "${ACTION}" in
-  status)    do_status; exit 0 ;;
-  reauth)    do_reauth; exit 0 ;;
-  uninstall) do_uninstall; exit 0 ;;
-esac
+gather_config() {
+  # Initialize CFG_* defaults (discover_config sets these, but jq may not be available yet)
+  CFG_FOUND=false CFG_HOST="" CFG_PROFILE=""
+  CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
+  CFG_TTL=""
+  CFG_SETTINGS_FILE="" CFG_HELPER_FILE=""
 
-# ── Banner & prompts ─────────────────────────────────────────────────────────
-echo -e "\n${BOLD}  Claude Code x Databricks FMAPI Setup${RESET}\n"
+  # Discover existing config for defaults
+  if command -v jq &>/dev/null; then
+    discover_config
+  fi
 
-# Initialize CFG_* defaults (discover_config sets these, but jq may not be available yet)
-CFG_FOUND=false CFG_HOST="" CFG_PROFILE=""
-CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
-CFG_SETTINGS_FILE="" CFG_HELPER_FILE=""
+  # Resolve defaults: CLI flag > discovered config > hardcoded default
+  _default() { echo "${1:-${2:-${3:-}}}"; }
 
-# Discover existing config for defaults
-if command -v jq &>/dev/null; then
-  discover_config
-fi
+  local default_host default_profile default_model default_opus default_sonnet default_haiku default_ttl
+  default_host=$(_default "$CLI_HOST" "$CFG_HOST")
+  default_profile=$(_default "$CLI_PROFILE" "$CFG_PROFILE" "fmapi-claudecode-profile")
+  default_model=$(_default "$CLI_MODEL" "$CFG_MODEL" "databricks-claude-opus-4-6")
+  default_opus=$(_default "$CLI_OPUS" "$CFG_OPUS" "databricks-claude-opus-4-6")
+  default_sonnet=$(_default "$CLI_SONNET" "$CFG_SONNET" "databricks-claude-sonnet-4-6")
+  default_haiku=$(_default "$CLI_HAIKU" "$CFG_HAIKU" "databricks-claude-haiku-4-5")
+  default_ttl=$(_default "$CLI_TTL" "$CFG_TTL" "30")
 
-# Helper: resolve default value — CLI flag > discovered config > hardcoded default
-_default() { echo "${1:-${2:-${3:-}}}"; }
+  # ── Workspace URL ─────────────────────────────────────────────────────────
+  prompt_value DATABRICKS_HOST "Databricks workspace URL" "$CLI_HOST" "$default_host"
+  [[ -z "$DATABRICKS_HOST" ]] && { error "Workspace URL is required."; exit 1; }
+  DATABRICKS_HOST="${DATABRICKS_HOST%/}"
+  [[ "$DATABRICKS_HOST" != https://* ]] && { error "Workspace URL must start with https://"; exit 1; }
 
-DEFAULT_HOST=$(_default "$CLI_HOST" "$CFG_HOST")
-DEFAULT_PROFILE=$(_default "$CLI_PROFILE" "$CFG_PROFILE")
-DEFAULT_MODEL=$(_default "$CLI_MODEL" "$CFG_MODEL" "databricks-claude-opus-4-6")
-DEFAULT_OPUS=$(_default "$CLI_OPUS" "$CFG_OPUS" "databricks-claude-opus-4-6")
-DEFAULT_SONNET=$(_default "$CLI_SONNET" "$CFG_SONNET" "databricks-claude-sonnet-4-6")
-DEFAULT_HAIKU=$(_default "$CLI_HAIKU" "$CFG_HAIKU" "databricks-claude-haiku-4-5")
+  # ── CLI profile ───────────────────────────────────────────────────────────
+  prompt_value DATABRICKS_PROFILE "Databricks CLI profile name" "$CLI_PROFILE" "$default_profile"
+  [[ -z "$DATABRICKS_PROFILE" ]] && { error "Profile name is required."; exit 1; }
+  [[ "$DATABRICKS_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]] || { error "Invalid profile name: '$DATABRICKS_PROFILE'. Use letters, numbers, hyphens, and underscores."; exit 1; }
 
-# ── Workspace URL ───────────────────────────────────────────────────────────
-if [[ -n "$CLI_HOST" ]]; then
-  DATABRICKS_HOST="$CLI_HOST"
-else
-  if [[ -n "$DEFAULT_HOST" ]]; then
-    read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks workspace URL ${DIM}[${DEFAULT_HOST}]${RESET}: ")" DATABRICKS_HOST
-    DATABRICKS_HOST="${DATABRICKS_HOST:-$DEFAULT_HOST}"
+  # ── Models ────────────────────────────────────────────────────────────────
+  prompt_value ANTHROPIC_MODEL "Model" "$CLI_MODEL" "$default_model"
+  prompt_value ANTHROPIC_OPUS_MODEL "Opus model" "$CLI_OPUS" "$default_opus"
+  prompt_value ANTHROPIC_SONNET_MODEL "Sonnet model" "$CLI_SONNET" "$default_sonnet"
+  prompt_value ANTHROPIC_HAIKU_MODEL "Haiku model" "$CLI_HAIKU" "$default_haiku"
+
+  # ── Token refresh interval ───────────────────────────────────────────────
+  prompt_value FMAPI_TTL_MINUTES "Token refresh interval (minutes)" "$CLI_TTL" "$default_ttl"
+  if ! [[ "$FMAPI_TTL_MINUTES" =~ ^[0-9]+$ ]] || [[ "$FMAPI_TTL_MINUTES" -le 0 ]]; then
+    error "Token refresh interval must be a positive integer (minutes)."
+    exit 1
+  fi
+  if [[ "$FMAPI_TTL_MINUTES" -gt 60 ]]; then
+    error "Token refresh interval cannot exceed 60 minutes. OAuth tokens expire after 1 hour."
+    exit 1
+  fi
+  FMAPI_TTL_MS=$(( FMAPI_TTL_MINUTES * 60000 ))
+
+  # ── Settings location ────────────────────────────────────────────────────
+  if [[ -n "$CLI_SETTINGS_LOCATION" ]]; then
+    case "$CLI_SETTINGS_LOCATION" in
+      home) SETTINGS_BASE="$HOME" ;;
+      cwd)  SETTINGS_BASE="$(cd "$(pwd)" && pwd)" ;;
+      *)
+        CLI_SETTINGS_LOCATION="${CLI_SETTINGS_LOCATION/#\~/$HOME}"
+        mkdir -p "$CLI_SETTINGS_LOCATION"
+        SETTINGS_BASE="$(cd "$CLI_SETTINGS_LOCATION" && pwd)"
+        ;;
+    esac
+  elif [[ "$NON_INTERACTIVE" == true ]]; then
+    SETTINGS_BASE="$HOME"
   else
-    read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks workspace URL: ")" DATABRICKS_HOST
+    select_option "Settings location" \
+      "Home directory|~/.claude/settings.json, default" \
+      "Current directory|./.claude/settings.json" \
+      "Custom path|enter your own path"
+    SETTINGS_CHOICE="$SELECT_RESULT"
+
+    case "$SETTINGS_CHOICE" in
+      1)
+        SETTINGS_BASE="$HOME"
+        ;;
+      2)
+        SETTINGS_BASE="$(cd "$(pwd)" && pwd)"
+        ;;
+      3)
+        read -rp "$(echo -e "  ${CYAN}?${RESET} Base path: ")" CUSTOM_PATH
+        [[ -z "$CUSTOM_PATH" ]] && { error "Custom path is required."; exit 1; }
+        CUSTOM_PATH="${CUSTOM_PATH/#\~/$HOME}"
+        mkdir -p "$CUSTOM_PATH"
+        SETTINGS_BASE="$(cd "$CUSTOM_PATH" && pwd)"
+        ;;
+    esac
   fi
-fi
-[[ -z "$DATABRICKS_HOST" ]] && { error "Workspace URL is required."; exit 1; }
-DATABRICKS_HOST="${DATABRICKS_HOST%/}"
-[[ "$DATABRICKS_HOST" != https://* ]] && { error "Workspace URL must start with https://"; exit 1; }
 
-# ── CLI profile ─────────────────────────────────────────────────────────────
-if [[ -n "$CLI_PROFILE" ]]; then
-  DATABRICKS_PROFILE="$CLI_PROFILE"
-else
-  if [[ -n "$DEFAULT_PROFILE" ]]; then
-    read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name ${DIM}[${DEFAULT_PROFILE}]${RESET}: ")" DATABRICKS_PROFILE
-    DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-$DEFAULT_PROFILE}"
-  else
-    read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name: ")" DATABRICKS_PROFILE
-  fi
-fi
-[[ -z "$DATABRICKS_PROFILE" ]] && { error "Profile name is required."; exit 1; }
-[[ "$DATABRICKS_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]] || { error "Invalid profile name: '$DATABRICKS_PROFILE'. Use letters, numbers, hyphens, and underscores."; exit 1; }
-
-# ── Models ──────────────────────────────────────────────────────────────────
-if [[ -n "$CLI_MODEL" ]]; then
-  ANTHROPIC_MODEL="$CLI_MODEL"
-else
-  read -rp "$(echo -e "  ${CYAN}?${RESET} Model ${DIM}[${DEFAULT_MODEL}]${RESET}: ")" ANTHROPIC_MODEL
-  ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-$DEFAULT_MODEL}"
-fi
-
-if [[ -n "$CLI_OPUS" ]]; then
-  ANTHROPIC_OPUS_MODEL="$CLI_OPUS"
-else
-  read -rp "$(echo -e "  ${CYAN}?${RESET} Opus model ${DIM}[${DEFAULT_OPUS}]${RESET}: ")" ANTHROPIC_OPUS_MODEL
-  ANTHROPIC_OPUS_MODEL="${ANTHROPIC_OPUS_MODEL:-$DEFAULT_OPUS}"
-fi
-
-if [[ -n "$CLI_SONNET" ]]; then
-  ANTHROPIC_SONNET_MODEL="$CLI_SONNET"
-else
-  read -rp "$(echo -e "  ${CYAN}?${RESET} Sonnet model ${DIM}[${DEFAULT_SONNET}]${RESET}: ")" ANTHROPIC_SONNET_MODEL
-  ANTHROPIC_SONNET_MODEL="${ANTHROPIC_SONNET_MODEL:-$DEFAULT_SONNET}"
-fi
-
-if [[ -n "$CLI_HAIKU" ]]; then
-  ANTHROPIC_HAIKU_MODEL="$CLI_HAIKU"
-else
-  read -rp "$(echo -e "  ${CYAN}?${RESET} Haiku model ${DIM}[${DEFAULT_HAIKU}]${RESET}: ")" ANTHROPIC_HAIKU_MODEL
-  ANTHROPIC_HAIKU_MODEL="${ANTHROPIC_HAIKU_MODEL:-$DEFAULT_HAIKU}"
-fi
-
-# ── Settings location ───────────────────────────────────────────────────────
-if [[ -n "$CLI_SETTINGS_LOCATION" ]]; then
-  case "$CLI_SETTINGS_LOCATION" in
-    home) SETTINGS_BASE="$HOME" ;;
-    cwd)  SETTINGS_BASE="$(cd "$(pwd)" && pwd)" ;;
-    *)
-      CLI_SETTINGS_LOCATION="${CLI_SETTINGS_LOCATION/#\~/$HOME}"
-      mkdir -p "$CLI_SETTINGS_LOCATION"
-      SETTINGS_BASE="$(cd "$CLI_SETTINGS_LOCATION" && pwd)"
-      ;;
-  esac
-else
-  select_option "Settings location" \
-    "Home directory|~/.claude/settings.json, default" \
-    "Current directory|./.claude/settings.json" \
-    "Custom path|enter your own path"
-  SETTINGS_CHOICE="$SELECT_RESULT"
-
-  case "$SETTINGS_CHOICE" in
-    1)
-      SETTINGS_BASE="$HOME"
-      ;;
-    2)
-      SETTINGS_BASE="$(cd "$(pwd)" && pwd)"
-      ;;
-    3)
-      read -rp "$(echo -e "  ${CYAN}?${RESET} Base path: ")" CUSTOM_PATH
-      [[ -z "$CUSTOM_PATH" ]] && { error "Custom path is required."; exit 1; }
-      CUSTOM_PATH="${CUSTOM_PATH/#\~/$HOME}"
-      mkdir -p "$CUSTOM_PATH"
-      SETTINGS_BASE="$(cd "$CUSTOM_PATH" && pwd)"
-      ;;
-  esac
-fi
-
-SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
-HELPER_FILE="${SETTINGS_BASE}/.claude/fmapi-key-helper.sh"
-
-# ── Install dependencies ─────────────────────────────────────────────────────
-echo -e "\n${BOLD}Installing dependencies${RESET}"
-
-# Homebrew
-if command -v brew &>/dev/null; then
-  success "Homebrew already installed."
-else
-  info "Installing Homebrew ..."
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  # Add brew to PATH for this session (needed on fresh installs)
-  if [[ -x /opt/homebrew/bin/brew ]]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-  elif [[ -x /usr/local/bin/brew ]]; then
-    eval "$(/usr/local/bin/brew shellenv)"
-  fi
-  success "Homebrew installed."
-fi
-
-# jq
-if command -v jq &>/dev/null; then
-  success "jq already installed."
-else
-  info "Installing jq ..."
-  brew install jq
-  success "jq installed."
-fi
-
-if command -v claude &>/dev/null; then
-  success "Claude Code already installed."
-else
-  info "Installing Claude Code ..."
-  curl -fsSL https://claude.ai/install.sh | bash
-  success "Claude Code installed."
-fi
-
-if command -v databricks &>/dev/null; then
-  success "Databricks CLI already installed."
-else
-  info "Installing Databricks CLI ..."
-  brew tap databricks/tap && brew install databricks
-  success "Databricks CLI installed."
-fi
-
-# ── Authenticate ──────────────────────────────────────────────────────────────
-echo -e "\n${BOLD}Authenticating${RESET}"
-
-get_oauth_token() {
-  databricks auth token --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
-    | jq -r '.access_token // empty'
+  SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
+  HELPER_FILE="${SETTINGS_BASE}/.claude/fmapi-key-helper.sh"
 }
 
-OAUTH_TOKEN=$(get_oauth_token) || true
-if [[ -z "$OAUTH_TOKEN" ]]; then
-  info "Logging in to ${DATABRICKS_HOST} ..."
-  databricks auth login --host "$DATABRICKS_HOST" --profile "$DATABRICKS_PROFILE"
-  OAUTH_TOKEN=$(get_oauth_token)
-fi
+install_dependencies() {
+  echo -e "\n${BOLD}Installing dependencies${RESET}"
 
-[[ -z "$OAUTH_TOKEN" ]] && { error "Failed to get OAuth access token."; exit 1; }
-success "OAuth session established."
+  # Homebrew
+  if command -v brew &>/dev/null; then
+    success "Homebrew already installed."
+  else
+    info "Installing Homebrew ..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Add brew to PATH for this session (needed on fresh installs)
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -x /usr/local/bin/brew ]]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
+    success "Homebrew installed."
+  fi
 
-# Clean up any legacy FMAPI PATs from prior installations
-OLD_PAT_IDS=$(databricks tokens list --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
-  | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
-if [[ -n "$OLD_PAT_IDS" ]]; then
-  info "Cleaning up legacy FMAPI PATs ..."
-  while IFS= read -r tid; do
-    [[ -n "$tid" ]] && databricks tokens delete "$tid" --profile "$DATABRICKS_PROFILE" 2>/dev/null || true
-  done <<< "$OLD_PAT_IDS"
-  success "Legacy PATs revoked."
-fi
+  # jq
+  if command -v jq &>/dev/null; then
+    success "jq already installed."
+  else
+    info "Installing jq ..."
+    brew install jq
+    success "jq installed."
+  fi
 
-# Clean up legacy cache file if present
-LEGACY_CACHE="${SETTINGS_BASE}/.claude/.fmapi-pat-cache"
-if [[ -f "$LEGACY_CACHE" ]]; then
-  rm -f "$LEGACY_CACHE"
-  success "Removed legacy PAT cache."
-fi
+  if command -v claude &>/dev/null; then
+    success "Claude Code already installed."
+  else
+    info "Installing Claude Code ..."
+    curl -fsSL https://claude.ai/install.sh | bash
+    success "Claude Code installed."
+  fi
 
-# ── Write .claude/settings.json ──────────────────────────────────────────────
-echo -e "\n${BOLD}Writing settings${RESET}"
+  if command -v databricks &>/dev/null; then
+    success "Databricks CLI already installed."
+  else
+    info "Installing Databricks CLI ..."
+    brew tap databricks/tap && brew install databricks
+    success "Databricks CLI installed."
+  fi
+}
 
-mkdir -p "$(dirname "$SETTINGS_FILE")"
+authenticate() {
+  echo -e "\n${BOLD}Authenticating${RESET}"
 
-# Fixed TTL: 50 minutes (3000000ms) — 10-minute buffer before 1-hour OAuth token expiry
-TTL_MS=3000000
+  get_oauth_token() {
+    databricks auth token --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
+      | jq -r '.access_token // empty'
+  }
 
-env_json=$(jq -n \
-  --arg model "$ANTHROPIC_MODEL" \
-  --arg base  "${DATABRICKS_HOST}/serving-endpoints/anthropic" \
-  --arg opus "$ANTHROPIC_OPUS_MODEL" \
-  --arg sonnet "$ANTHROPIC_SONNET_MODEL" \
-  --arg haiku "$ANTHROPIC_HAIKU_MODEL" \
-  --arg ttl "$TTL_MS" \
-  '{
-    "ANTHROPIC_MODEL": $model,
-    "ANTHROPIC_BASE_URL": $base,
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": $opus,
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": $sonnet,
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": $haiku,
-    "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
-    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
-    "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": $ttl
-  }')
+  OAUTH_TOKEN=$(get_oauth_token) || true
+  if [[ -z "$OAUTH_TOKEN" ]]; then
+    info "Logging in to ${DATABRICKS_HOST} ..."
+    databricks auth login --host "$DATABRICKS_HOST" --profile "$DATABRICKS_PROFILE"
+    OAUTH_TOKEN=$(get_oauth_token)
+  fi
 
-if [[ -f "$SETTINGS_FILE" ]]; then
-  tmpfile=$(mktemp "${SETTINGS_FILE}.XXXXXX")
-  _CLEANUP_FILES+=("$tmpfile")
-  jq --argjson new_env "$env_json" --arg helper "$HELPER_FILE" \
-    '.env = ((.env // {}) * $new_env | del(.ANTHROPIC_AUTH_TOKEN)) | .apiKeyHelper = $helper | del(._fmapi_meta)' \
-    "$SETTINGS_FILE" > "$tmpfile"
-  chmod 600 "$tmpfile"
-  mv "$tmpfile" "$SETTINGS_FILE"
-else
-  jq -n --argjson env "$env_json" --arg helper "$HELPER_FILE" \
-    '{"apiKeyHelper": $helper, "env": $env}' > "$SETTINGS_FILE"
-  chmod 600 "$SETTINGS_FILE"
-fi
-success "Settings written to ${SETTINGS_FILE}."
+  [[ -z "$OAUTH_TOKEN" ]] && { error "Failed to get OAuth access token."; exit 1; }
+  success "OAuth session established."
 
-# ── Write API key helper script ──────────────────────────────────────────────
-echo -e "\n${BOLD}API key helper${RESET}"
+  # Clean up any legacy FMAPI PATs from prior installations
+  OLD_PAT_IDS=$(databricks tokens list --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
+    | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
+  if [[ -n "$OLD_PAT_IDS" ]]; then
+    info "Cleaning up legacy FMAPI PATs ..."
+    while IFS= read -r tid; do
+      [[ -n "$tid" ]] && databricks tokens delete "$tid" --profile "$DATABRICKS_PROFILE" 2>/dev/null || true
+    done <<< "$OLD_PAT_IDS"
+    success "Legacy PATs revoked."
+  fi
 
-cat > "$HELPER_FILE" << 'HELPER_SCRIPT'
+  # Clean up legacy cache file if present
+  LEGACY_CACHE="${SETTINGS_BASE}/.claude/.fmapi-pat-cache"
+  if [[ -f "$LEGACY_CACHE" ]]; then
+    rm -f "$LEGACY_CACHE"
+    success "Removed legacy PAT cache."
+  fi
+}
+
+write_settings() {
+  echo -e "\n${BOLD}Writing settings${RESET}"
+
+  mkdir -p "$(dirname "$SETTINGS_FILE")"
+
+  TTL_MS="$FMAPI_TTL_MS"
+
+  env_json=$(jq -n \
+    --arg model "$ANTHROPIC_MODEL" \
+    --arg base  "${DATABRICKS_HOST}/serving-endpoints/anthropic" \
+    --arg opus "$ANTHROPIC_OPUS_MODEL" \
+    --arg sonnet "$ANTHROPIC_SONNET_MODEL" \
+    --arg haiku "$ANTHROPIC_HAIKU_MODEL" \
+    --arg ttl "$TTL_MS" \
+    '{
+      "ANTHROPIC_MODEL": $model,
+      "ANTHROPIC_BASE_URL": $base,
+      "ANTHROPIC_DEFAULT_OPUS_MODEL": $opus,
+      "ANTHROPIC_DEFAULT_SONNET_MODEL": $sonnet,
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL": $haiku,
+      "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
+      "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+      "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": $ttl
+    }')
+
+  if [[ -f "$SETTINGS_FILE" ]]; then
+    tmpfile=$(mktemp "${SETTINGS_FILE}.XXXXXX")
+    _CLEANUP_FILES+=("$tmpfile")
+    jq --argjson new_env "$env_json" --arg helper "$HELPER_FILE" \
+      '.env = ((.env // {}) * $new_env | del(.ANTHROPIC_AUTH_TOKEN)) | .apiKeyHelper = $helper | del(._fmapi_meta)' \
+      "$SETTINGS_FILE" > "$tmpfile"
+    chmod 600 "$tmpfile"
+    mv "$tmpfile" "$SETTINGS_FILE"
+  else
+    jq -n --argjson env "$env_json" --arg helper "$HELPER_FILE" \
+      '{"apiKeyHelper": $helper, "env": $env}' > "$SETTINGS_FILE"
+    chmod 600 "$SETTINGS_FILE"
+  fi
+  success "Settings written to ${SETTINGS_FILE}."
+}
+
+write_helper() {
+  echo -e "\n${BOLD}API key helper${RESET}"
+
+  cat > "$HELPER_FILE" << 'HELPER_SCRIPT'
 #!/bin/sh
 set -eu
 
@@ -735,47 +719,98 @@ echo "FMAPI: Re-authentication failed. Run manually: databricks auth login --hos
 exit 1
 HELPER_SCRIPT
 
-sed -i '' "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g" "$HELPER_FILE"
-chmod 700 "$HELPER_FILE"
-success "Helper script written to ${HELPER_FILE}."
+  sed -i '' "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g" "$HELPER_FILE"
+  chmod 700 "$HELPER_FILE"
+  success "Helper script written to ${HELPER_FILE}."
+}
 
-# ── Self-install plugin ───────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/.claude-plugin/plugin.json" ]]; then
-  PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
-  mkdir -p "$(dirname "$PLUGINS_FILE")"
+register_plugin() {
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "${SCRIPT_DIR}/.claude-plugin/plugin.json" ]]; then
+    PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
+    mkdir -p "$(dirname "$PLUGINS_FILE")"
 
-  NEEDS_INSTALL=true
-  if [[ -f "$PLUGINS_FILE" ]]; then
-    existing_path=$(jq -r '.["fmapi-codingagent"].installPath // empty' "$PLUGINS_FILE" 2>/dev/null) || true
-    [[ "$existing_path" == "$SCRIPT_DIR" ]] && NEEDS_INSTALL=false
-  fi
-
-  if [[ "$NEEDS_INSTALL" == true ]]; then
+    NEEDS_INSTALL=true
     if [[ -f "$PLUGINS_FILE" ]]; then
-      plugin_tmp=$(mktemp "${PLUGINS_FILE}.XXXXXX")
-      _CLEANUP_FILES+=("$plugin_tmp")
-      jq --arg path "$SCRIPT_DIR" \
-        '.["fmapi-codingagent"] = {"scope": "user", "installPath": $path}' \
-        "$PLUGINS_FILE" > "$plugin_tmp"
-      mv "$plugin_tmp" "$PLUGINS_FILE"
-    else
-      jq -n --arg path "$SCRIPT_DIR" \
-        '{"fmapi-codingagent": {"scope": "user", "installPath": $path}}' > "$PLUGINS_FILE"
+      existing_path=$(jq -r '.["fmapi-codingagent"].installPath // empty' "$PLUGINS_FILE" 2>/dev/null) || true
+      [[ "$existing_path" == "$SCRIPT_DIR" ]] && NEEDS_INSTALL=false
     fi
-    success "Plugin registered (skills: /fmapi-codingagent-status, /fmapi-codingagent-reauth, /fmapi-codingagent-setup)."
-  fi
-fi
 
-# ── Done ──────────────────────────────────────────────────────────────────────
-echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
-echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${DATABRICKS_HOST}${RESET}"
-echo -e "  ${DIM}Profile${RESET}    ${BOLD}${DATABRICKS_PROFILE}${RESET}"
-echo -e "  ${DIM}Model${RESET}      ${BOLD}${ANTHROPIC_MODEL}${RESET}"
-echo -e "  ${DIM}Opus${RESET}       ${BOLD}${ANTHROPIC_OPUS_MODEL}${RESET}"
-echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
-echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
-echo -e "  ${DIM}Auth${RESET}       ${BOLD}OAuth (auto-refresh, 50m check interval)${RESET}"
-echo -e "  ${DIM}Helper${RESET}     ${BOLD}${HELPER_FILE}${RESET}"
-echo -e "  ${DIM}Settings${RESET}   ${BOLD}${SETTINGS_FILE}${RESET}"
-echo -e "\n  Run ${CYAN}${BOLD}claude${RESET} to start.\n"
+    if [[ "$NEEDS_INSTALL" == true ]]; then
+      if [[ -f "$PLUGINS_FILE" ]]; then
+        plugin_tmp=$(mktemp "${PLUGINS_FILE}.XXXXXX")
+        _CLEANUP_FILES+=("$plugin_tmp")
+        jq --arg path "$SCRIPT_DIR" \
+          '.["fmapi-codingagent"] = {"scope": "user", "installPath": $path}' \
+          "$PLUGINS_FILE" > "$plugin_tmp"
+        mv "$plugin_tmp" "$PLUGINS_FILE"
+      else
+        jq -n --arg path "$SCRIPT_DIR" \
+          '{"fmapi-codingagent": {"scope": "user", "installPath": $path}}' > "$PLUGINS_FILE"
+      fi
+      success "Plugin registered (skills: /fmapi-codingagent-status, /fmapi-codingagent-reauth, /fmapi-codingagent-setup)."
+    fi
+  fi
+}
+
+print_summary() {
+  echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
+  echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${DATABRICKS_HOST}${RESET}"
+  echo -e "  ${DIM}Profile${RESET}    ${BOLD}${DATABRICKS_PROFILE}${RESET}"
+  echo -e "  ${DIM}Model${RESET}      ${BOLD}${ANTHROPIC_MODEL}${RESET}"
+  echo -e "  ${DIM}Opus${RESET}       ${BOLD}${ANTHROPIC_OPUS_MODEL}${RESET}"
+  echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
+  echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
+  echo -e "  ${DIM}Auth${RESET}       ${BOLD}OAuth (auto-refresh, ${FMAPI_TTL_MINUTES}m check interval)${RESET}"
+  echo -e "  ${DIM}Helper${RESET}     ${BOLD}${HELPER_FILE}${RESET}"
+  echo -e "  ${DIM}Settings${RESET}   ${BOLD}${SETTINGS_FILE}${RESET}"
+  echo -e "\n  Run ${CYAN}${BOLD}claude${RESET} to start.\n"
+}
+
+do_setup() {
+  echo -e "\n${BOLD}  Claude Code x Databricks FMAPI Setup${RESET}\n"
+  gather_config
+  install_dependencies
+  authenticate
+  write_settings
+  write_helper
+  register_plugin
+  print_summary
+}
+
+# ── CLI flag parsing ──────────────────────────────────────────────────────────
+CLI_HOST="" CLI_PROFILE="" CLI_MODEL="" CLI_OPUS="" CLI_SONNET="" CLI_HAIKU=""
+CLI_TTL=""
+CLI_SETTINGS_LOCATION=""
+ACTION=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)      show_help ;;
+    --status)       ACTION="status"; shift ;;
+    --reauth)       ACTION="reauth"; shift ;;
+    --uninstall)    ACTION="uninstall"; shift ;;
+    --host)         CLI_HOST="${2:-}"; [[ -z "$CLI_HOST" ]] && { error "--host requires a URL."; exit 1; }; shift 2 ;;
+    --profile)      CLI_PROFILE="${2:-}"; [[ -z "$CLI_PROFILE" ]] && { error "--profile requires a name."; exit 1; }; shift 2 ;;
+    --model)        CLI_MODEL="${2:-}"; [[ -z "$CLI_MODEL" ]] && { error "--model requires a value."; exit 1; }; shift 2 ;;
+    --opus)         CLI_OPUS="${2:-}"; [[ -z "$CLI_OPUS" ]] && { error "--opus requires a value."; exit 1; }; shift 2 ;;
+    --sonnet)       CLI_SONNET="${2:-}"; [[ -z "$CLI_SONNET" ]] && { error "--sonnet requires a value."; exit 1; }; shift 2 ;;
+    --haiku)        CLI_HAIKU="${2:-}"; [[ -z "$CLI_HAIKU" ]] && { error "--haiku requires a value."; exit 1; }; shift 2 ;;
+    --ttl)          CLI_TTL="${2:-}"; [[ -z "$CLI_TTL" ]] && { error "--ttl requires a value."; exit 1; }; shift 2 ;;
+    --settings-location) CLI_SETTINGS_LOCATION="${2:-}"; [[ -z "$CLI_SETTINGS_LOCATION" ]] && { error "--settings-location requires a value."; exit 1; }; shift 2 ;;
+    *)              error "Unknown option: $1"; echo "  Run with --help for usage." >&2; exit 1 ;;
+  esac
+done
+
+# ── Non-interactive mode ──────────────────────────────────────────────────────
+NON_INTERACTIVE=false
+[[ -n "$CLI_HOST" ]] && NON_INTERACTIVE=true
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+case "${ACTION}" in
+  status)    do_status; exit 0 ;;
+  reauth)    do_reauth; exit 0 ;;
+  uninstall) do_uninstall; exit 0 ;;
+esac
+
+do_setup

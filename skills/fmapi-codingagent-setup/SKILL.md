@@ -42,6 +42,7 @@ bash "<install-path>/setup-fmapi-claudecode.sh" \
 | `--opus MODEL` | Opus model | `--opus databricks-claude-opus-4-6` |
 | `--sonnet MODEL` | Sonnet model | `--sonnet databricks-claude-sonnet-4-6` |
 | `--haiku MODEL` | Haiku model | `--haiku databricks-claude-haiku-4-5` |
+| `--ttl MINUTES` | Token refresh interval in minutes (default: `30`, max: `60`) | `--ttl 45` |
 | `--settings-location PATH` | Where to write settings (`home`, `cwd`, or a custom path) | `--settings-location home` |
 
 When `--host` and `--profile` are both provided along with all other flags, the script runs non-interactively. Any missing flags will be prompted interactively, with existing config values shown as defaults.

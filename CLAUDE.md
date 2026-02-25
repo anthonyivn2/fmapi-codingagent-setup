@@ -39,7 +39,7 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 
 ## Key Concepts
 
-- **`setup-fmapi-claudecode.sh`** — Bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and generates `fmapi-key-helper.sh`. Supports `--status`, `--reauth`, `--uninstall`, and CLI flags for non-interactive setup.
+- **`setup-fmapi-claudecode.sh`** — Bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and generates `fmapi-key-helper.sh`. Supports `--status`, `--reauth`, `--uninstall`, and CLI flags for non-interactive setup. Passing `--host` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
 - **`.claude-plugin/plugin.json`** — Plugin manifest that registers the repo as a Claude Code plugin with the `skills/` directory.
 - **`skills/*/SKILL.md`** — Skill definitions that instruct Claude how to invoke the setup script with the appropriate flags.
 - **`fmapi-key-helper.sh`** — A POSIX `/bin/sh` script generated alongside `settings.json` that Claude Code invokes automatically via the `apiKeyHelper` setting to obtain OAuth access tokens on demand. The Databricks CLI handles token refresh transparently.
@@ -53,13 +53,14 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 | `--reauth` | Re-authenticate Databricks OAuth session |
 | `--uninstall` | Remove all FMAPI artifacts and plugin registration |
 | `-h`, `--help` | Show help |
-| `--host URL` | Databricks workspace URL |
-| `--profile NAME` | Databricks CLI profile name |
-| `--model MODEL` | Primary model |
-| `--opus MODEL` | Opus model |
-| `--sonnet MODEL` | Sonnet model |
-| `--haiku MODEL` | Haiku model |
-| `--settings-location PATH` | Settings location: `home`, `cwd`, or custom path |
+| `--host URL` | Databricks workspace URL (enables non-interactive mode) |
+| `--profile NAME` | Databricks CLI profile name (default: `fmapi-claudecode-profile`) |
+| `--model MODEL` | Primary model (default: `databricks-claude-opus-4-6`) |
+| `--opus MODEL` | Opus model (default: `databricks-claude-opus-4-6`) |
+| `--sonnet MODEL` | Sonnet model (default: `databricks-claude-sonnet-4-6`) |
+| `--haiku MODEL` | Haiku model (default: `databricks-claude-haiku-4-5`) |
+| `--ttl MINUTES` | Token refresh interval in minutes (default: `30`, max: `60`) |
+| `--settings-location PATH` | Settings location: `home`, `cwd`, or custom path (default: `home`) |
 
 ## Development Guidelines
 
