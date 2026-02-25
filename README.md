@@ -132,6 +132,22 @@ Models available through FMAPI depend on what is enabled in your Databricks work
 | `databricks-claude-sonnet-4-5` | Claude Sonnet 4.5 |
 | `databricks-claude-haiku-4-5` | Claude Haiku 4.5 |
 
+### Uninstalling
+
+To remove all FMAPI artifacts created by the setup script:
+
+```bash
+bash setup-fmapi-claudecode.sh --uninstall
+```
+
+The uninstall process:
+
+1. **Discovers wrappers** — Scans both `~/.zshrc` and `~/.bashrc` for any FMAPI wrapper blocks, regardless of the command name used during setup.
+2. **Cleans settings files** — Removes FMAPI-specific keys (`ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, etc.) and the `_fmapi_meta` block from `.claude/settings.json`. If no other settings remain, the file is deleted. Non-FMAPI settings are preserved.
+3. **Optionally revokes PATs** — With a separate confirmation prompt, revokes any Databricks PATs whose comment starts with "Claude Code FMAPI". If you decline, the tokens will expire on their own.
+
+Re-running `--uninstall` when nothing is installed is safe and will print "Nothing to uninstall."
+
 ### Re-running the Script
 
 You can safely re-run `setup-fmapi-claudecode.sh` at any time to:

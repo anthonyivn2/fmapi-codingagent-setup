@@ -23,7 +23,7 @@ CLAUDE.md                    # This file
 
 ## Key Concepts
 
-- **`setup-fmapi-claudecode.sh`** — Interactive bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, creates a Personal Access Token (PAT), writes `.claude/settings.json`, and adds a shell wrapper to the user's RC file. Uses an interactive arrow-key selector for multi-choice prompts (command name, settings location, PAT lifetime).
+- **`setup-fmapi-claudecode.sh`** — Interactive bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, creates a Personal Access Token (PAT), writes `.claude/settings.json`, and adds a shell wrapper to the user's RC file. Uses an interactive arrow-key selector for multi-choice prompts (command name, settings location, PAT lifetime). Supports `--uninstall` to cleanly remove all FMAPI artifacts (wrappers, settings keys, and optionally PATs).
 - **`fmapi-claude`** — The default shell function name injected into `~/.zshrc` or `~/.bashrc` that wraps the `claude` command with automatic Databricks PAT refresh. Users can choose to override `claude` directly or use a custom command name during setup.
 - **`.claude/settings.json`** — Claude Code configuration file containing environment variables (`ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, etc.) and `_fmapi_meta` (PAT expiry and lifetime) that route requests through Databricks FMAPI.
 
@@ -48,6 +48,11 @@ There are no automated tests. To verify changes:
 3. Open a new terminal and run `fmapi-claude` (or your chosen command name) to verify the wrapper works.
 4. Run the script a second time to confirm idempotency (wrapper is replaced, settings are merged).
 5. Re-run the script with a different command name and verify the old wrapper is removed from the RC file.
+6. Run `bash setup-fmapi-claudecode.sh --uninstall` and confirm removal of wrappers, settings keys, and optionally PATs.
+7. Verify the wrapper is gone: `grep -c 'wrapper >>>' ~/.zshrc` should return 0.
+8. Verify settings are cleaned: `jq . ~/.claude/settings.json` should have no FMAPI keys (or the file should be deleted).
+9. Re-run `--uninstall` to verify idempotent "Nothing to uninstall" message.
+10. Run `bash setup-fmapi-claudecode.sh --help` and verify the updated usage text.
 
 ## Abbreviations
 

@@ -8,7 +8,6 @@ YELLOW='\033[33m' CYAN='\033[36m' RESET='\033[0m'
 info()    { echo -e "  ${CYAN}::${RESET} $1"; }
 success() { echo -e "  ${GREEN}${BOLD}ok${RESET} $1"; }
 error()   { echo -e "\n  ${RED}${BOLD}!! ERROR${RESET}${RED} $1${RESET}\n" >&2; }
-
 # ── Interactive selector ─────────────────────────────────────────────────────
 # Usage: select_option "Prompt" "label1|desc1" "label2|desc2" ...
 # Sets SELECT_RESULT to the 1-based index of the chosen option.
@@ -87,11 +86,246 @@ select_option() {
   SELECT_RESULT=$(( cur + 1 ))
 }
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+# Check if a value exists in an array (bash 3.x compatible)
+# Usage: array_contains "value" "${array[@]}"
+array_contains() {
+  local needle="$1"; shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# ── Uninstall ────────────────────────────────────────────────────────────────
+do_uninstall() {
+  echo -e "\n${BOLD}  Claude Code x Databricks FMAPI — Uninstall${RESET}\n"
+
+  # Require jq
+  if ! command -v jq &>/dev/null; then
+    error "jq is required for uninstall. Install with: brew install jq"
+    exit 1
+  fi
+
+  # ── Discover wrappers in both RC files ───────────────────────────────────
+  local rc_files=("$HOME/.zshrc" "$HOME/.bashrc")
+  declare -a wrapper_entries=()   # "rc_file|cmd_name|profile|settings_file"
+  declare -a found_settings=()
+
+  for rc in "${rc_files[@]}"; do
+    [[ -f "$rc" ]] || continue
+    # Find all begin markers: # >>> <name> wrapper >>>
+    while IFS= read -r marker_line; do
+      local cmd_name=""
+      cmd_name=$(echo "$marker_line" | sed -n 's/^# >>> \(.*\) wrapper >>>$/\1/p')
+      [[ -z "$cmd_name" ]] && continue
+
+      local end_marker="# <<< ${cmd_name} wrapper <<<"
+
+      # Extract profile from the wrapper block
+      local profile=""
+      profile=$(sed -n "/# >>> ${cmd_name} wrapper >>>/,/${end_marker}/{ s/.*profile=\"\([^\"]*\)\".*/\1/p; }" "$rc" | head -1)
+
+      # Extract settings file path from the wrapper block
+      local sf=""
+      sf=$(sed -n "/# >>> ${cmd_name} wrapper >>>/,/${end_marker}/{ s/.*local sf=\"\([^\"]*\)\".*/\1/p; }" "$rc" | head -1)
+
+      wrapper_entries+=("${rc}|${cmd_name}|${profile}|${sf}")
+
+      # Collect settings file if it exists
+      if [[ -n "$sf" ]]; then
+        found_settings+=("$sf")
+      fi
+    done < <(grep -n '# >>> .* wrapper >>>' "$rc" 2>/dev/null | sed 's/^[0-9]*://')
+  done
+
+  # ── Discover settings files ──────────────────────────────────────────────
+  # Add well-known locations
+  for candidate in "$HOME/.claude/settings.json" "./.claude/settings.json"; do
+    found_settings+=("$candidate")
+  done
+
+  # Deduplicate by absolute path, keep only files with _fmapi_meta
+  declare -a settings_files=()
+  for sf in "${found_settings[@]}"; do
+    [[ -z "$sf" ]] && continue
+    # Expand ~ if present
+    sf="${sf/#\~/$HOME}"
+    # Resolve to absolute path if file exists
+    if [[ -f "$sf" ]]; then
+      local abs_path=""
+      abs_path=$(cd "$(dirname "$sf")" && echo "$(pwd)/$(basename "$sf")")
+      if ! array_contains "$abs_path" ${settings_files[@]+"${settings_files[@]}"}; then
+        # Only include if it has _fmapi_meta
+        if jq -e '._fmapi_meta' "$abs_path" &>/dev/null; then
+          settings_files+=("$abs_path")
+        fi
+      fi
+    fi
+  done
+
+  # ── Collect unique profiles ──────────────────────────────────────────────
+  declare -a profiles=()
+  for entry in "${wrapper_entries[@]}"; do
+    local profile=""
+    profile=$(echo "$entry" | cut -d'|' -f3)
+    if [[ -n "$profile" ]] && ! array_contains "$profile" ${profiles[@]+"${profiles[@]}"}; then
+      profiles+=("$profile")
+    fi
+  done
+
+  # ── Early exit if nothing found ──────────────────────────────────────────
+  if [[ ${#wrapper_entries[@]} -eq 0 && ${#settings_files[@]} -eq 0 ]]; then
+    info "Nothing to uninstall. No FMAPI wrappers or settings found."
+    exit 0
+  fi
+
+  # ── Display findings ─────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Found the following FMAPI artifacts:${RESET}\n"
+
+  if [[ ${#wrapper_entries[@]} -gt 0 ]]; then
+    echo -e "  ${CYAN}Shell wrappers:${RESET}"
+    for entry in "${wrapper_entries[@]}"; do
+      local rc="" cmd=""
+      rc=$(echo "$entry" | cut -d'|' -f1)
+      cmd=$(echo "$entry" | cut -d'|' -f2)
+      echo -e "    ${BOLD}${cmd}${RESET} in ${DIM}${rc}${RESET}"
+    done
+    echo ""
+  fi
+
+  if [[ ${#settings_files[@]} -gt 0 ]]; then
+    echo -e "  ${CYAN}Settings files (FMAPI keys only — other settings preserved):${RESET}"
+    for sf in "${settings_files[@]}"; do
+      echo -e "    ${DIM}${sf}${RESET}"
+    done
+    echo ""
+  fi
+
+  # ── Confirm removal ──────────────────────────────────────────────────────
+  select_option "Remove wrappers and clean settings?" \
+    "Yes|remove FMAPI artifacts listed above" \
+    "No|cancel and exit"
+  [[ "$SELECT_RESULT" -ne 1 ]] && { info "Cancelled."; exit 0; }
+
+  echo ""
+
+  # ── Remove wrapper blocks ────────────────────────────────────────────────
+  for entry in "${wrapper_entries[@]}"; do
+    local rc="" cmd=""
+    rc=$(echo "$entry" | cut -d'|' -f1)
+    cmd=$(echo "$entry" | cut -d'|' -f2)
+    local begin="# >>> ${cmd} wrapper >>>"
+    local end="# <<< ${cmd} wrapper <<<"
+    if grep -qF "$begin" "$rc" 2>/dev/null; then
+      sed -i '' "/$begin/,/$end/d" "$rc"
+      success "Removed ${cmd} wrapper from ${rc}."
+    fi
+  done
+
+  # ── Clean settings files ─────────────────────────────────────────────────
+  local fmapi_env_keys='["ANTHROPIC_MODEL","ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_DEFAULT_OPUS_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL","ANTHROPIC_DEFAULT_HAIKU_MODEL","ANTHROPIC_CUSTOM_HEADERS","CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"]'
+
+  for sf in "${settings_files[@]}"; do
+    local tmpfile=""
+    tmpfile=$(mktemp "${sf}.XXXXXX")
+    jq --argjson keys "$fmapi_env_keys" '
+      .env = ((.env // {}) | to_entries | map(select(.key as $k | $keys | index($k) | not)) | from_entries)
+      | del(._fmapi_meta)
+      | if .env == {} then del(.env) else . end
+    ' "$sf" > "$tmpfile"
+    chmod 600 "$tmpfile"
+
+    # Check if file is now empty ({})
+    local remaining=""
+    remaining=$(jq 'length' "$tmpfile")
+    if [[ "$remaining" == "0" ]]; then
+      rm -f "$tmpfile" "$sf"
+      success "Deleted ${sf} (no remaining settings)."
+    else
+      mv "$tmpfile" "$sf"
+      success "Cleaned FMAPI keys from ${sf} (preserved other settings)."
+    fi
+  done
+
+  # ── Optionally revoke PATs ──────────────────────────────────────────────
+  if [[ ${#profiles[@]} -gt 0 ]]; then
+    echo ""
+    select_option "Revoke FMAPI PATs from Databricks?" \
+      "Yes|revoke PATs with comment starting with \"Claude Code FMAPI\"" \
+      "No|skip (tokens will expire on their own)"
+
+    if [[ "$SELECT_RESULT" -eq 1 ]]; then
+      if ! command -v databricks &>/dev/null; then
+        info "Databricks CLI not found. Skipping PAT revocation (tokens will expire naturally)."
+      else
+        for profile in "${profiles[@]}"; do
+          # Verify OAuth session
+          local oauth_tok=""
+          oauth_tok=$(databricks auth token --profile "$profile" --output json 2>/dev/null \
+            | jq -r '.access_token // empty') || true
+
+          if [[ -z "$oauth_tok" ]]; then
+            info "No active OAuth session for profile '${profile}'. Skipping PAT revocation for this profile."
+            continue
+          fi
+
+          local pat_ids=""
+          pat_ids=$(databricks tokens list --profile "$profile" --output json 2>/dev/null \
+            | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
+
+          if [[ -z "$pat_ids" ]]; then
+            info "No FMAPI PATs found for profile '${profile}'."
+            continue
+          fi
+
+          local count=0
+          while IFS= read -r tid; do
+            if [[ -n "$tid" ]]; then
+              databricks tokens delete "$tid" --profile "$profile" 2>/dev/null || true
+              (( count++ )) || true
+            fi
+          done <<< "$pat_ids"
+          success "Revoked ${count} FMAPI PAT(s) for profile '${profile}'."
+        done
+      fi
+    fi
+  fi
+
+  # ── Summary ──────────────────────────────────────────────────────────────
+  echo -e "\n${GREEN}${BOLD}  Uninstall complete!${RESET}\n"
+
+  # Collect unique RC files that were modified
+  declare -a modified_rcs=()
+  for entry in "${wrapper_entries[@]}"; do
+    local rc=""
+    rc=$(echo "$entry" | cut -d'|' -f1)
+    if ! array_contains "$rc" ${modified_rcs[@]+"${modified_rcs[@]}"}; then
+      modified_rcs+=("$rc")
+    fi
+  done
+  for rc in "${modified_rcs[@]}"; do
+    echo -e "  Run ${CYAN}${BOLD}source ${rc}${RESET} or open a ${BOLD}new terminal${RESET} to apply changes."
+  done
+  echo ""
+}
+
 # ── Help ──────────────────────────────────────────────────────────────────────
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && {
-  echo "Usage: bash setup_fmapi_cc.sh"
+  echo "Usage: bash setup-fmapi-claudecode.sh [--uninstall] [-h|--help]"
+  echo ""
   echo "Sets up Claude Code to use Databricks Foundation Model API."
-  echo "Requires: brew, jq"
+  echo "Installs prerequisites automatically (Homebrew, jq, Claude Code, Databricks CLI)."
+  echo ""
+  echo "Options:"
+  echo "  --uninstall   Remove FMAPI wrappers, settings, and optionally revoke PATs"
+  echo "  -h, --help    Show this help message"
+  exit 0
+}
+
+[[ "${1:-}" == "--uninstall" ]] && {
+  do_uninstall
   exit 0
 }
 
@@ -110,15 +344,21 @@ read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name: ")" DATABRI
 read -rp "$(echo -e "  ${CYAN}?${RESET} Model ${DIM}[databricks-claude-opus-4-6]${RESET}: ")" ANTHROPIC_MODEL
 ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-databricks-claude-opus-4-6}"
 
+read -rp "$(echo -e "  ${CYAN}?${RESET} Sonnet model ${DIM}[databricks-claude-sonnet-4-6]${RESET}: ")" ANTHROPIC_SONNET_MODEL
+ANTHROPIC_SONNET_MODEL="${ANTHROPIC_SONNET_MODEL:-databricks-claude-sonnet-4-6}"
+
+read -rp "$(echo -e "  ${CYAN}?${RESET} Haiku model ${DIM}[databricks-claude-haiku-4-5]${RESET}: ")" ANTHROPIC_HAIKU_MODEL
+ANTHROPIC_HAIKU_MODEL="${ANTHROPIC_HAIKU_MODEL:-databricks-claude-haiku-4-5}"
+
 select_option "Command name" \
-  "fmapi-claude|separate command, default" \
-  "claude|override the default claude command" \
+  "claude|override the default claude command, default" \
+  "fmapi-claude|separate command" \
   "Custom|enter your own command name"
 CMD_CHOICE="$SELECT_RESULT"
 
 case "$CMD_CHOICE" in
-  1) CMD_NAME="fmapi-claude" ;;
-  2) CMD_NAME="claude" ;;
+  1) CMD_NAME="claude" ;;
+  2) CMD_NAME="fmapi-claude" ;;
   3)
     read -rp "$(echo -e "  ${CYAN}?${RESET} Command name: ")" CMD_NAME
     [[ -z "$CMD_NAME" ]] && { error "Command name is required."; exit 1; }
@@ -128,17 +368,17 @@ case "$CMD_CHOICE" in
 esac
 
 select_option "Settings location" \
+  "Home directory|~/.claude/settings.json, default" \
   "Current directory|./.claude/settings.json" \
-  "Home directory|~/.claude/settings.json" \
   "Custom path|enter your own path"
 SETTINGS_CHOICE="$SELECT_RESULT"
 
 case "$SETTINGS_CHOICE" in
   1)
-    SETTINGS_BASE="$(cd "$(pwd)" && pwd)"
+    SETTINGS_BASE="$HOME"
     ;;
   2)
-    SETTINGS_BASE="$HOME"
+    SETTINGS_BASE="$(cd "$(pwd)" && pwd)"
     ;;
   3)
     read -rp "$(echo -e "  ${CYAN}?${RESET} Base path: ")" CUSTOM_PATH
@@ -168,6 +408,30 @@ SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
 
 # ── Install dependencies ─────────────────────────────────────────────────────
 echo -e "\n${BOLD}Installing dependencies${RESET}"
+
+# Homebrew
+if command -v brew &>/dev/null; then
+  success "Homebrew already installed."
+else
+  info "Installing Homebrew ..."
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  # Add brew to PATH for this session (needed on fresh installs)
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+  success "Homebrew installed."
+fi
+
+# jq
+if command -v jq &>/dev/null; then
+  success "jq already installed."
+else
+  info "Installing jq ..."
+  brew install jq
+  success "jq installed."
+fi
 
 if command -v claude &>/dev/null; then
   success "Claude Code already installed."
@@ -234,13 +498,15 @@ env_json=$(jq -n \
   --arg model "$ANTHROPIC_MODEL" \
   --arg base  "${DATABRICKS_HOST}/serving-endpoints/anthropic" \
   --arg token "$ANTHROPIC_AUTH_TOKEN" \
+  --arg sonnet "$ANTHROPIC_SONNET_MODEL" \
+  --arg haiku "$ANTHROPIC_HAIKU_MODEL" \
   '{
     "ANTHROPIC_MODEL": $model,
     "ANTHROPIC_BASE_URL": $base,
     "ANTHROPIC_AUTH_TOKEN": $token,
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-6",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "databricks-claude-sonnet-4-5",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "databricks-claude-haiku-4-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": $sonnet,
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": $haiku,
     "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
   }')
@@ -378,6 +644,8 @@ echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
 echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${DATABRICKS_HOST}${RESET}"
 echo -e "  ${DIM}Profile${RESET}    ${BOLD}${DATABRICKS_PROFILE}${RESET}"
 echo -e "  ${DIM}Model${RESET}      ${BOLD}${ANTHROPIC_MODEL}${RESET}"
+echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
+echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
 echo -e "  ${DIM}Auth${RESET}       ${BOLD}PAT (${PAT_LIFETIME_LABEL}, expires $(date -r "$PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))${RESET}"
 echo -e "  ${DIM}Command${RESET}    ${BOLD}${CMD_NAME}${RESET}"
 echo -e "  ${DIM}Settings${RESET}   ${BOLD}${SETTINGS_FILE}${RESET}"
