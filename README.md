@@ -42,10 +42,84 @@ The script will prompt you for:
 
 > The **Settings location** and **PAT lifetime** prompts use an interactive arrow-key selector &mdash; use the up/down arrow keys to navigate and Enter to confirm.
 
+When re-running the script, existing configuration values are shown as defaults in `[brackets]` &mdash; press Enter to keep the current value.
+
 Once complete, run:
 
 ```bash
 claude
+```
+
+### Non-Interactive Setup
+
+You can skip interactive prompts by passing CLI flags:
+
+```bash
+bash setup-fmapi-claudecode.sh \
+  --host https://my-workspace.cloud.databricks.com \
+  --profile my-profile
+```
+
+Any flags not provided will be prompted interactively. See [CLI Reference](#cli-reference) for all available flags.
+
+### Plugin Skills
+
+The setup script automatically registers this repo as a Claude Code plugin, making the following slash commands available inside Claude Code:
+
+| Skill | Description |
+|---|---|
+| `/fmapi-codingagent-status` | Check FMAPI configuration health &mdash; workspace, PAT status, OAuth session, and model settings |
+| `/fmapi-codingagent-refresh` | Rotate the PAT token non-interactively (revoke old tokens and create a fresh one) |
+| `/fmapi-codingagent-setup` | Run full FMAPI setup (interactive or non-interactive with CLI flags) |
+
+These skills allow you to manage your FMAPI configuration without leaving Claude Code.
+
+### Status Dashboard
+
+Check the health of your FMAPI configuration:
+
+```bash
+bash setup-fmapi-claudecode.sh --status
+```
+
+The dashboard shows:
+
+- **Configuration** &mdash; Workspace URL, profile, and model names
+- **PAT Health** &mdash; Green (>2h remaining), yellow (<2h), or red (expired)
+- **OAuth Health** &mdash; Whether the Databricks OAuth session is active
+- **File locations** &mdash; Paths to settings, helper, and cache files
+
+### Token Refresh
+
+Rotate your PAT token without re-running the full setup:
+
+```bash
+bash setup-fmapi-claudecode.sh --refresh
+```
+
+This is non-interactive: it discovers the existing config, revokes old FMAPI PATs, creates a new one with the same lifetime, and updates the cache. If the OAuth session has expired, it prints instructions for re-authentication.
+
+### CLI Reference
+
+```
+Usage: bash setup-fmapi-claudecode.sh [OPTIONS]
+
+Commands:
+  --status              Show FMAPI configuration health dashboard
+  --refresh             Rotate PAT token (non-interactive)
+  --uninstall           Remove FMAPI helper scripts, settings, and optionally revoke PATs
+  -h, --help            Show this help message
+
+Setup options (skip interactive prompts):
+  --host URL            Databricks workspace URL
+  --profile NAME        Databricks CLI profile name
+  --model MODEL         Primary model (default: databricks-claude-opus-4-6)
+  --opus MODEL          Opus model (default: databricks-claude-opus-4-6)
+  --sonnet MODEL        Sonnet model (default: databricks-claude-sonnet-4-6)
+  --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
+  --settings-location PATH
+                        Where to write settings: "home", "cwd", or a custom path
+  --pat-lifetime DAYS   PAT lifetime in days: 1, 3, 5, or 7
 ```
 
 ### What the Script Does
@@ -118,6 +192,7 @@ The uninstall process:
 2. **Deletes helper script and cache** &mdash; Removes `fmapi-key-helper.sh` and `.fmapi-pat-cache`.
 3. **Cleans settings files** &mdash; Removes FMAPI-specific keys (`apiKeyHelper`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, etc.) from `.claude/settings.json`. If no other settings remain, the file is deleted. Non-FMAPI settings are preserved.
 4. **Optionally revokes PATs** &mdash; With a separate confirmation prompt, revokes any FMAPI PATs from the workspace. If you decline, the tokens will expire on their own.
+5. **Removes plugin registration** &mdash; Deregisters the plugin from `~/.claude/plugins/installed_plugins.json`.
 
 Re-running `--uninstall` when nothing is installed is safe and will print "Nothing to uninstall."
 
@@ -128,6 +203,8 @@ You can safely re-run `setup-fmapi-claudecode.sh` at any time to:
 - Update the workspace URL, profile, or models (Opus, Sonnet, Haiku)
 - Refresh an expired token
 - Repair a missing or corrupted settings file or helper script
+
+When re-running, existing configuration values are discovered from the current settings and shown as defaults. Press Enter to keep any current value, or type a new value to change it.
 
 The script will overwrite the existing helper script and merge settings without duplication.
 

@@ -2,15 +2,19 @@
 
 ## Project Overview
 
-This repo contains setup scripts that configure coding agents to use foundation models served through Databricks Foundation Model API (FMAPI). Currently only Claude Code is supported, with OpenAI Codex and Gemini CLI planned. There is no application code — just setup scripts and documentation.
+This repo contains setup scripts and a Claude Code plugin that configure coding agents to use foundation models served through Databricks Foundation Model API (FMAPI). Currently only Claude Code is supported, with OpenAI Codex and Gemini CLI planned. The repo includes a setup script, plugin manifest, and skill definitions — no application code.
 
 ## Repository Structure
 
 ```
-setup-fmapi-claudecode.sh   # Claude Code setup script (bash)
-README.md                    # User-facing documentation
-CLAUDE.md                    # This file
-.gitignore                   # Ignores .claude/settings.json, helper scripts, cache files, and Python artifacts
+setup-fmapi-claudecode.sh                  # Claude Code setup script (bash)
+.claude-plugin/plugin.json                 # Claude Code plugin manifest
+skills/fmapi-codingagent-status/SKILL.md   # /fmapi-codingagent-status skill
+skills/fmapi-codingagent-refresh/SKILL.md  # /fmapi-codingagent-refresh skill
+skills/fmapi-codingagent-setup/SKILL.md    # /fmapi-codingagent-setup skill
+README.md                                  # User-facing documentation
+CLAUDE.md                                  # This file
+.gitignore                                 # Ignores generated files and Python artifacts
 ```
 
 ## Supported Coding Agents
@@ -21,12 +25,43 @@ CLAUDE.md                    # This file
 | OpenAI Codex | — | Planned |
 | Gemini CLI | — | Planned |
 
+## Plugin Skills
+
+The repo is a Claude Code plugin providing three slash-command skills:
+
+| Skill | Description |
+|---|---|
+| `/fmapi-codingagent-status` | Show FMAPI configuration health dashboard (PAT status, OAuth health, model config) |
+| `/fmapi-codingagent-refresh` | Rotate PAT token non-interactively (revoke old + create new) |
+| `/fmapi-codingagent-setup` | Run full FMAPI setup (interactive or non-interactive with CLI flags) |
+
+The plugin is automatically registered in `~/.claude/plugins/installed_plugins.json` when the setup script runs. It is deregistered on `--uninstall`.
+
 ## Key Concepts
 
-- **`setup-fmapi-claudecode.sh`** — Interactive bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, creates a Personal Access Token (PAT), writes `.claude/settings.json` with an `apiKeyHelper` reference, and generates `fmapi-key-helper.sh` for automatic token management. Supports `--uninstall` to cleanly remove all FMAPI artifacts.
+- **`setup-fmapi-claudecode.sh`** — Bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, creates a Personal Access Token (PAT), writes `.claude/settings.json`, and generates `fmapi-key-helper.sh`. Supports `--status`, `--refresh`, `--uninstall`, and CLI flags for non-interactive setup.
+- **`.claude-plugin/plugin.json`** — Plugin manifest that registers the repo as a Claude Code plugin with the `skills/` directory.
+- **`skills/*/SKILL.md`** — Skill definitions that instruct Claude how to invoke the setup script with the appropriate flags.
 - **`fmapi-key-helper.sh`** — A POSIX `/bin/sh` script generated alongside `settings.json` that Claude Code invokes automatically via the `apiKeyHelper` setting to obtain and refresh auth tokens.
 - **`.fmapi-pat-cache`** — Local cache file storing the current PAT token and expiry metadata.
 - **`.claude/settings.json`** — Claude Code configuration file containing `apiKeyHelper` (path to helper script) and environment variables that route requests through Databricks FMAPI.
+
+## CLI Flags
+
+| Flag | Description |
+|---|---|
+| `--status` | Show configuration health dashboard |
+| `--refresh` | Rotate PAT token (non-interactive) |
+| `--uninstall` | Remove all FMAPI artifacts and plugin registration |
+| `-h`, `--help` | Show help |
+| `--host URL` | Databricks workspace URL |
+| `--profile NAME` | Databricks CLI profile name |
+| `--model MODEL` | Primary model |
+| `--opus MODEL` | Opus model |
+| `--sonnet MODEL` | Sonnet model |
+| `--haiku MODEL` | Haiku model |
+| `--settings-location PATH` | Settings location: `home`, `cwd`, or custom path |
+| `--pat-lifetime DAYS` | PAT lifetime: 1, 3, 5, or 7 |
 
 ## Development Guidelines
 
@@ -44,13 +79,17 @@ CLAUDE.md                    # This file
 
 There are no automated tests. To verify changes:
 
-1. Run `bash setup-fmapi-claudecode.sh` end-to-end with a real Databricks workspace.
-2. Confirm `.claude/settings.json` is written correctly with `apiKeyHelper` and env vars.
-3. Verify the helper script and cache file exist with owner-only permissions.
-4. Run `claude` and confirm it works with FMAPI.
-5. Re-run the setup script to confirm idempotency.
-6. Run `bash setup-fmapi-claudecode.sh --uninstall` and confirm cleanup.
-7. Run `bash setup-fmapi-claudecode.sh --help` and verify the usage text.
+1. Run `bash setup-fmapi-claudecode.sh --help` and verify all flags documented.
+2. Run `bash setup-fmapi-claudecode.sh --status` — should show "no config found" or current dashboard.
+3. Run `bash setup-fmapi-claudecode.sh` end-to-end with a real Databricks workspace.
+4. Confirm `.claude/settings.json` is written correctly with `apiKeyHelper` and env vars.
+5. Verify the helper script and cache file exist with owner-only permissions.
+6. Run `bash setup-fmapi-claudecode.sh --status` — confirm dashboard shows correct config.
+7. Run `bash setup-fmapi-claudecode.sh --refresh` — confirm PAT rotated.
+8. Re-run the setup script to confirm idempotency (defaults pre-populated).
+9. Confirm `~/.claude/plugins/installed_plugins.json` has `fmapi-codingagent` entry.
+10. Run `claude` and confirm it works with FMAPI.
+11. Run `bash setup-fmapi-claudecode.sh --uninstall` and confirm cleanup (including plugin deregistration).
 
 ## Abbreviations
 

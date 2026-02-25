@@ -108,6 +108,204 @@ array_contains() {
   return 1
 }
 
+# ── Config discovery ──────────────────────────────────────────────────────────
+# Discover existing FMAPI configuration from settings and helper files.
+# Sets CFG_* variables for use by callers.
+discover_config() {
+  CFG_FOUND=false
+  CFG_HOST="" CFG_PROFILE="" CFG_LIFETIME="" CFG_CACHE_FILE=""
+  CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
+  CFG_SETTINGS_FILE="" CFG_HELPER_FILE=""
+  CFG_PAT_EXPIRY_EPOCH="" CFG_PAT_TOKEN=""
+
+  # Find the first settings file with FMAPI config
+  for candidate in "$HOME/.claude/settings.json" "./.claude/settings.json"; do
+    [[ -f "$candidate" ]] || continue
+    local abs_path=""
+    abs_path=$(cd "$(dirname "$candidate")" && echo "$(pwd)/$(basename "$candidate")")
+
+    local helper=""
+    helper=$(jq -r '.apiKeyHelper // empty' "$abs_path" 2>/dev/null) || true
+    [[ -n "$helper" ]] || continue
+
+    CFG_FOUND=true
+    CFG_SETTINGS_FILE="$abs_path"
+    CFG_HELPER_FILE="$helper"
+
+    # Parse helper script for FMAPI_* variables (supports both FMAPI_* and legacy names)
+    if [[ -f "$helper" ]]; then
+      CFG_PROFILE=$(sed -n 's/^FMAPI_PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+      [[ -z "$CFG_PROFILE" ]] && { CFG_PROFILE=$(sed -n 's/^PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
+      CFG_HOST=$(sed -n 's/^FMAPI_HOST="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+      [[ -z "$CFG_HOST" ]] && { CFG_HOST=$(sed -n 's/^HOST="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
+      CFG_LIFETIME=$(sed -n 's/^FMAPI_LIFETIME="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+      [[ -z "$CFG_LIFETIME" ]] && { CFG_LIFETIME=$(sed -n 's/^LIFETIME="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
+      CFG_CACHE_FILE=$(sed -n 's/^FMAPI_CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+      [[ -z "$CFG_CACHE_FILE" ]] && { CFG_CACHE_FILE=$(sed -n 's/^CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
+    fi
+
+    # Parse model names from settings.json env block
+    CFG_MODEL=$(jq -r '.env.ANTHROPIC_MODEL // empty' "$abs_path" 2>/dev/null) || true
+    CFG_OPUS=$(jq -r '.env.ANTHROPIC_DEFAULT_OPUS_MODEL // empty' "$abs_path" 2>/dev/null) || true
+    CFG_SONNET=$(jq -r '.env.ANTHROPIC_DEFAULT_SONNET_MODEL // empty' "$abs_path" 2>/dev/null) || true
+    CFG_HAIKU=$(jq -r '.env.ANTHROPIC_DEFAULT_HAIKU_MODEL // empty' "$abs_path" 2>/dev/null) || true
+
+    # Parse cache file for token expiry
+    if [[ -n "$CFG_CACHE_FILE" && -f "$CFG_CACHE_FILE" ]]; then
+      CFG_PAT_EXPIRY_EPOCH=$(jq -r '.expiry_epoch // empty' "$CFG_CACHE_FILE" 2>/dev/null) || true
+      CFG_PAT_TOKEN=$(jq -r '.token // empty' "$CFG_CACHE_FILE" 2>/dev/null) || true
+    fi
+
+    break  # Use first match
+  done
+}
+
+# ── Status ────────────────────────────────────────────────────────────────────
+do_status() {
+  if ! command -v jq &>/dev/null; then
+    error "jq is required for status. Install with: brew install jq"
+    exit 1
+  fi
+
+  discover_config
+
+  if [[ "$CFG_FOUND" != true ]]; then
+    echo -e "\n${BOLD}  FMAPI Status${RESET}\n"
+    info "No FMAPI configuration found."
+    info "Run ${CYAN}bash setup-fmapi-claudecode.sh${RESET} to set up."
+    echo ""
+    exit 0
+  fi
+
+  echo -e "\n${BOLD}  FMAPI Status${RESET}\n"
+
+  # ── Configuration ─────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Configuration${RESET}"
+  echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${CFG_HOST:-unknown}${RESET}"
+  echo -e "  ${DIM}Profile${RESET}    ${BOLD}${CFG_PROFILE:-unknown}${RESET}"
+  echo -e "  ${DIM}Model${RESET}      ${BOLD}${CFG_MODEL:-unknown}${RESET}"
+  echo -e "  ${DIM}Opus${RESET}       ${BOLD}${CFG_OPUS:-unknown}${RESET}"
+  echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${CFG_SONNET:-unknown}${RESET}"
+  echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${CFG_HAIKU:-unknown}${RESET}"
+  echo ""
+
+  # ── PAT health ────────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}PAT Health${RESET}"
+  if [[ -n "$CFG_PAT_EXPIRY_EPOCH" ]]; then
+    local now remaining_s remaining_h remaining_m
+    now=$(date +%s)
+    remaining_s=$(( CFG_PAT_EXPIRY_EPOCH - now ))
+
+    if (( remaining_s <= 0 )); then
+      echo -e "  ${RED}${BOLD}EXPIRED${RESET}  PAT expired $(date -r "$CFG_PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z')"
+    elif (( remaining_s < 7200 )); then
+      remaining_m=$(( remaining_s / 60 ))
+      echo -e "  ${YELLOW}${BOLD}WARNING${RESET}  ${remaining_m}m remaining (expires $(date -r "$CFG_PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))"
+    else
+      remaining_h=$(( remaining_s / 3600 ))
+      remaining_m=$(( (remaining_s % 3600) / 60 ))
+      echo -e "  ${GREEN}${BOLD}HEALTHY${RESET}  ${remaining_h}h ${remaining_m}m remaining (expires $(date -r "$CFG_PAT_EXPIRY_EPOCH" '+%Y-%m-%d %H:%M %Z'))"
+    fi
+  else
+    echo -e "  ${RED}${BOLD}UNKNOWN${RESET}  No cache file found"
+  fi
+  echo ""
+
+  # ── OAuth health ──────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}OAuth Health${RESET}"
+  if [[ -n "$CFG_PROFILE" ]] && command -v databricks &>/dev/null; then
+    local oauth_tok=""
+    oauth_tok=$(databricks auth token --profile "$CFG_PROFILE" --output json 2>/dev/null \
+      | jq -r '.access_token // empty') || true
+
+    if [[ -n "$oauth_tok" ]]; then
+      echo -e "  ${GREEN}${BOLD}ACTIVE${RESET}   OAuth session valid"
+    else
+      echo -e "  ${RED}${BOLD}EXPIRED${RESET}  Run: ${CYAN}databricks auth login --host ${CFG_HOST} --profile ${CFG_PROFILE}${RESET}"
+    fi
+  else
+    echo -e "  ${DIM}UNKNOWN${RESET}  Cannot check (databricks CLI not found or no profile)"
+  fi
+  echo ""
+
+  # ── File locations ────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Files${RESET}"
+  echo -e "  ${DIM}Settings${RESET}   ${CFG_SETTINGS_FILE}"
+  echo -e "  ${DIM}Helper${RESET}     ${CFG_HELPER_FILE}"
+  if [[ -n "$CFG_CACHE_FILE" ]]; then
+    echo -e "  ${DIM}Cache${RESET}      ${CFG_CACHE_FILE}"
+  fi
+  echo ""
+}
+
+# ── Refresh ───────────────────────────────────────────────────────────────────
+do_refresh() {
+  if ! command -v jq &>/dev/null; then
+    error "jq is required for refresh. Install with: brew install jq"
+    exit 1
+  fi
+
+  if ! command -v databricks &>/dev/null; then
+    error "Databricks CLI is required for refresh. Install with: brew tap databricks/tap && brew install databricks"
+    exit 1
+  fi
+
+  discover_config
+
+  if [[ "$CFG_FOUND" != true ]]; then
+    error "No FMAPI configuration found. Run setup first."
+    exit 1
+  fi
+
+  [[ -z "$CFG_PROFILE" ]] && { error "Could not determine profile from helper script."; exit 1; }
+  [[ -z "$CFG_HOST" ]] && { error "Could not determine host from helper script."; exit 1; }
+  [[ -z "$CFG_LIFETIME" ]] && { error "Could not determine PAT lifetime from helper script."; exit 1; }
+  [[ -z "$CFG_CACHE_FILE" ]] && { error "Could not determine cache file from helper script."; exit 1; }
+
+  # Check OAuth session — do NOT launch browser, just report
+  local oauth_tok=""
+  oauth_tok=$(databricks auth token --profile "$CFG_PROFILE" --output json 2>/dev/null \
+    | jq -r '.access_token // empty') || true
+
+  if [[ -z "$oauth_tok" ]]; then
+    error "OAuth session expired. Re-authenticate first:"
+    echo -e "  ${CYAN}databricks auth login --host ${CFG_HOST} --profile ${CFG_PROFILE}${RESET}\n" >&2
+    exit 1
+  fi
+
+  # Revoke old FMAPI PATs
+  local old_ids=""
+  old_ids=$(databricks tokens list --profile "$CFG_PROFILE" --output json 2>/dev/null \
+    | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
+  if [[ -n "$old_ids" ]]; then
+    while IFS= read -r tid; do
+      [[ -n "$tid" ]] && databricks tokens delete "$tid" --profile "$CFG_PROFILE" 2>/dev/null || true
+    done <<< "$old_ids"
+  fi
+
+  # Create new PAT
+  local pat_json="" new_token="" expiry_epoch=""
+  pat_json=$(databricks tokens create \
+    --lifetime-seconds "$CFG_LIFETIME" \
+    --comment "Claude Code FMAPI (created $(date '+%Y-%m-%d'))" \
+    --profile "$CFG_PROFILE" \
+    --output json)
+  new_token=$(echo "$pat_json" | jq -r '.token_value // empty')
+  [[ -z "$new_token" ]] && { error "Failed to create PAT."; exit 1; }
+  expiry_epoch=$(( $(date +%s) + CFG_LIFETIME ))
+
+  # Update cache atomically
+  local tmpfile=""
+  tmpfile=$(mktemp "${CFG_CACHE_FILE}.XXXXXX")
+  _CLEANUP_FILES+=("$tmpfile")
+  jq -n --arg tok "$new_token" --argjson exp "$expiry_epoch" --argjson lt "$CFG_LIFETIME" \
+    '{token: $tok, expiry_epoch: $exp, lifetime_seconds: $lt}' > "$tmpfile"
+  chmod 600 "$tmpfile"
+  mv "$tmpfile" "$CFG_CACHE_FILE"
+
+  success "PAT refreshed (expires $(date -r "$expiry_epoch" '+%Y-%m-%d %H:%M %Z'))."
+}
+
 # ── Uninstall ────────────────────────────────────────────────────────────────
 do_uninstall() {
   echo -e "\n${BOLD}  Claude Code x Databricks FMAPI — Uninstall${RESET}\n"
@@ -143,15 +341,17 @@ do_uninstall() {
         if ! array_contains "$helper" ${helper_scripts[@]+"${helper_scripts[@]}"}; then
           helper_scripts+=("$helper")
         fi
-        # Extract profile from helper script
+        # Extract profile from helper script (supports both FMAPI_PROFILE and legacy PROFILE)
         local profile=""
-        profile=$(sed -n 's/^PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+        profile=$(sed -n 's/^FMAPI_PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+        [[ -z "$profile" ]] && { profile=$(sed -n 's/^PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
         if [[ -n "$profile" ]] && ! array_contains "$profile" ${profiles[@]+"${profiles[@]}"}; then
           profiles+=("$profile")
         fi
-        # Find cache file from helper script
+        # Find cache file from helper script (supports both FMAPI_CACHE_FILE and legacy CACHE_FILE)
         local cache_file=""
-        cache_file=$(sed -n 's/^CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+        cache_file=$(sed -n 's/^FMAPI_CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
+        [[ -z "$cache_file" ]] && { cache_file=$(sed -n 's/^CACHE_FILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
         if [[ -n "$cache_file" && -f "$cache_file" ]]; then
           if ! array_contains "$cache_file" ${cache_files[@]+"${cache_files[@]}"}; then
             cache_files+=("$cache_file")
@@ -293,88 +493,241 @@ do_uninstall() {
     fi
   fi
 
+  # ── Remove plugin registration ─────────────────────────────────────────
+  local plugins_file="$HOME/.claude/plugins/installed_plugins.json"
+  if [[ -f "$plugins_file" ]] && jq -e '.["fmapi-codingagent"]' "$plugins_file" &>/dev/null; then
+    local ptmp=""
+    ptmp=$(mktemp "${plugins_file}.XXXXXX")
+    _CLEANUP_FILES+=("$ptmp")
+    jq 'del(.["fmapi-codingagent"])' "$plugins_file" > "$ptmp"
+    local plen=""
+    plen=$(jq 'length' "$ptmp")
+    if [[ "$plen" == "0" ]]; then
+      rm -f "$ptmp" "$plugins_file"
+      success "Removed plugin registration (file deleted — no other plugins)."
+    else
+      mv "$ptmp" "$plugins_file"
+      success "Removed plugin registration from ${plugins_file}."
+    fi
+  fi
+
   # ── Summary ──────────────────────────────────────────────────────────────
   echo -e "\n${GREEN}${BOLD}  Uninstall complete!${RESET}\n"
 }
 
-# ── Help ──────────────────────────────────────────────────────────────────────
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && {
-  echo "Usage: bash setup-fmapi-claudecode.sh [--uninstall] [-h|--help]"
-  echo ""
-  echo "Sets up Claude Code to use Databricks Foundation Model API."
-  echo "Installs prerequisites automatically (Homebrew, jq, Claude Code, Databricks CLI)."
-  echo ""
-  echo "Options:"
-  echo "  --uninstall   Remove FMAPI helper scripts, settings, and optionally revoke PATs"
-  echo "  -h, --help    Show this help message"
+# ── CLI flag parsing ──────────────────────────────────────────────────────────
+CLI_HOST="" CLI_PROFILE="" CLI_MODEL="" CLI_OPUS="" CLI_SONNET="" CLI_HAIKU=""
+CLI_SETTINGS_LOCATION="" CLI_PAT_LIFETIME=""
+ACTION=""
+
+show_help() {
+  cat <<'HELPTEXT'
+Usage: bash setup-fmapi-claudecode.sh [OPTIONS]
+
+Sets up Claude Code to use Databricks Foundation Model API.
+Installs prerequisites automatically (Homebrew, jq, Claude Code, Databricks CLI).
+
+Commands:
+  --status              Show FMAPI configuration health dashboard
+  --refresh             Rotate PAT token (non-interactive)
+  --uninstall           Remove FMAPI helper scripts, settings, and optionally revoke PATs
+  -h, --help            Show this help message
+
+Setup options (skip interactive prompts):
+  --host URL            Databricks workspace URL (e.g. https://my-workspace.cloud.databricks.com)
+  --profile NAME        Databricks CLI profile name
+  --model MODEL         Primary model (default: databricks-claude-opus-4-6)
+  --opus MODEL          Opus model (default: databricks-claude-opus-4-6)
+  --sonnet MODEL        Sonnet model (default: databricks-claude-sonnet-4-6)
+  --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
+  --settings-location PATH
+                        Where to write settings: "home", "cwd", or a custom path
+  --pat-lifetime DAYS   PAT lifetime in days: 1, 3, 5, or 7
+
+Examples:
+  # Interactive setup (prompts for all values)
+  bash setup-fmapi-claudecode.sh
+
+  # Non-interactive setup (all values from flags)
+  bash setup-fmapi-claudecode.sh --host https://my-workspace.cloud.databricks.com --profile my-profile
+
+  # Check configuration health
+  bash setup-fmapi-claudecode.sh --status
+
+  # Rotate PAT token
+  bash setup-fmapi-claudecode.sh --refresh
+
+  # Uninstall
+  bash setup-fmapi-claudecode.sh --uninstall
+HELPTEXT
   exit 0
 }
 
-[[ "${1:-}" == "--uninstall" ]] && {
-  do_uninstall
-  exit 0
-}
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)      show_help ;;
+    --status)       ACTION="status"; shift ;;
+    --refresh)      ACTION="refresh"; shift ;;
+    --uninstall)    ACTION="uninstall"; shift ;;
+    --host)         CLI_HOST="${2:-}"; [[ -z "$CLI_HOST" ]] && { error "--host requires a URL."; exit 1; }; shift 2 ;;
+    --profile)      CLI_PROFILE="${2:-}"; [[ -z "$CLI_PROFILE" ]] && { error "--profile requires a name."; exit 1; }; shift 2 ;;
+    --model)        CLI_MODEL="${2:-}"; [[ -z "$CLI_MODEL" ]] && { error "--model requires a value."; exit 1; }; shift 2 ;;
+    --opus)         CLI_OPUS="${2:-}"; [[ -z "$CLI_OPUS" ]] && { error "--opus requires a value."; exit 1; }; shift 2 ;;
+    --sonnet)       CLI_SONNET="${2:-}"; [[ -z "$CLI_SONNET" ]] && { error "--sonnet requires a value."; exit 1; }; shift 2 ;;
+    --haiku)        CLI_HAIKU="${2:-}"; [[ -z "$CLI_HAIKU" ]] && { error "--haiku requires a value."; exit 1; }; shift 2 ;;
+    --settings-location) CLI_SETTINGS_LOCATION="${2:-}"; [[ -z "$CLI_SETTINGS_LOCATION" ]] && { error "--settings-location requires a value."; exit 1; }; shift 2 ;;
+    --pat-lifetime) CLI_PAT_LIFETIME="${2:-}"; [[ -z "$CLI_PAT_LIFETIME" ]] && { error "--pat-lifetime requires a value."; exit 1; }; shift 2 ;;
+    *)              error "Unknown option: $1"; echo "  Run with --help for usage." >&2; exit 1 ;;
+  esac
+done
+
+# ── Dispatch commands ─────────────────────────────────────────────────────────
+case "${ACTION}" in
+  status)    do_status; exit 0 ;;
+  refresh)   do_refresh; exit 0 ;;
+  uninstall) do_uninstall; exit 0 ;;
+esac
 
 # ── Banner & prompts ─────────────────────────────────────────────────────────
 echo -e "\n${BOLD}  Claude Code x Databricks FMAPI Setup${RESET}\n"
 
-read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks workspace URL: ")" DATABRICKS_HOST
+# Initialize CFG_* defaults (discover_config sets these, but jq may not be available yet)
+CFG_FOUND=false CFG_HOST="" CFG_PROFILE="" CFG_LIFETIME="" CFG_CACHE_FILE=""
+CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
+CFG_SETTINGS_FILE="" CFG_HELPER_FILE="" CFG_PAT_EXPIRY_EPOCH="" CFG_PAT_TOKEN=""
+
+# Discover existing config for defaults
+if command -v jq &>/dev/null; then
+  discover_config
+fi
+
+# Helper: resolve default value — CLI flag > discovered config > hardcoded default
+_default() { echo "${1:-${2:-${3:-}}}"; }
+
+DEFAULT_HOST=$(_default "$CLI_HOST" "$CFG_HOST")
+DEFAULT_PROFILE=$(_default "$CLI_PROFILE" "$CFG_PROFILE")
+DEFAULT_MODEL=$(_default "$CLI_MODEL" "$CFG_MODEL" "databricks-claude-opus-4-6")
+DEFAULT_OPUS=$(_default "$CLI_OPUS" "$CFG_OPUS" "databricks-claude-opus-4-6")
+DEFAULT_SONNET=$(_default "$CLI_SONNET" "$CFG_SONNET" "databricks-claude-sonnet-4-6")
+DEFAULT_HAIKU=$(_default "$CLI_HAIKU" "$CFG_HAIKU" "databricks-claude-haiku-4-5")
+
+# ── Workspace URL ───────────────────────────────────────────────────────────
+if [[ -n "$CLI_HOST" ]]; then
+  DATABRICKS_HOST="$CLI_HOST"
+else
+  if [[ -n "$DEFAULT_HOST" ]]; then
+    read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks workspace URL ${DIM}[${DEFAULT_HOST}]${RESET}: ")" DATABRICKS_HOST
+    DATABRICKS_HOST="${DATABRICKS_HOST:-$DEFAULT_HOST}"
+  else
+    read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks workspace URL: ")" DATABRICKS_HOST
+  fi
+fi
 [[ -z "$DATABRICKS_HOST" ]] && { error "Workspace URL is required."; exit 1; }
 DATABRICKS_HOST="${DATABRICKS_HOST%/}"
 [[ "$DATABRICKS_HOST" != https://* ]] && { error "Workspace URL must start with https://"; exit 1; }
 
-read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name: ")" DATABRICKS_PROFILE
+# ── CLI profile ─────────────────────────────────────────────────────────────
+if [[ -n "$CLI_PROFILE" ]]; then
+  DATABRICKS_PROFILE="$CLI_PROFILE"
+else
+  if [[ -n "$DEFAULT_PROFILE" ]]; then
+    read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name ${DIM}[${DEFAULT_PROFILE}]${RESET}: ")" DATABRICKS_PROFILE
+    DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-$DEFAULT_PROFILE}"
+  else
+    read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks CLI profile name: ")" DATABRICKS_PROFILE
+  fi
+fi
 [[ -z "$DATABRICKS_PROFILE" ]] && { error "Profile name is required."; exit 1; }
 [[ "$DATABRICKS_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]] || { error "Invalid profile name: '$DATABRICKS_PROFILE'. Use letters, numbers, hyphens, and underscores."; exit 1; }
 
-read -rp "$(echo -e "  ${CYAN}?${RESET} Model ${DIM}[databricks-claude-opus-4-6]${RESET}: ")" ANTHROPIC_MODEL
-ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-databricks-claude-opus-4-6}"
+# ── Models ──────────────────────────────────────────────────────────────────
+if [[ -n "$CLI_MODEL" ]]; then
+  ANTHROPIC_MODEL="$CLI_MODEL"
+else
+  read -rp "$(echo -e "  ${CYAN}?${RESET} Model ${DIM}[${DEFAULT_MODEL}]${RESET}: ")" ANTHROPIC_MODEL
+  ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-$DEFAULT_MODEL}"
+fi
 
-read -rp "$(echo -e "  ${CYAN}?${RESET} Opus model ${DIM}[databricks-claude-opus-4-6]${RESET}: ")" ANTHROPIC_OPUS_MODEL
-ANTHROPIC_OPUS_MODEL="${ANTHROPIC_OPUS_MODEL:-databricks-claude-opus-4-6}"
+if [[ -n "$CLI_OPUS" ]]; then
+  ANTHROPIC_OPUS_MODEL="$CLI_OPUS"
+else
+  read -rp "$(echo -e "  ${CYAN}?${RESET} Opus model ${DIM}[${DEFAULT_OPUS}]${RESET}: ")" ANTHROPIC_OPUS_MODEL
+  ANTHROPIC_OPUS_MODEL="${ANTHROPIC_OPUS_MODEL:-$DEFAULT_OPUS}"
+fi
 
-read -rp "$(echo -e "  ${CYAN}?${RESET} Sonnet model ${DIM}[databricks-claude-sonnet-4-6]${RESET}: ")" ANTHROPIC_SONNET_MODEL
-ANTHROPIC_SONNET_MODEL="${ANTHROPIC_SONNET_MODEL:-databricks-claude-sonnet-4-6}"
+if [[ -n "$CLI_SONNET" ]]; then
+  ANTHROPIC_SONNET_MODEL="$CLI_SONNET"
+else
+  read -rp "$(echo -e "  ${CYAN}?${RESET} Sonnet model ${DIM}[${DEFAULT_SONNET}]${RESET}: ")" ANTHROPIC_SONNET_MODEL
+  ANTHROPIC_SONNET_MODEL="${ANTHROPIC_SONNET_MODEL:-$DEFAULT_SONNET}"
+fi
 
-read -rp "$(echo -e "  ${CYAN}?${RESET} Haiku model ${DIM}[databricks-claude-haiku-4-5]${RESET}: ")" ANTHROPIC_HAIKU_MODEL
-ANTHROPIC_HAIKU_MODEL="${ANTHROPIC_HAIKU_MODEL:-databricks-claude-haiku-4-5}"
+if [[ -n "$CLI_HAIKU" ]]; then
+  ANTHROPIC_HAIKU_MODEL="$CLI_HAIKU"
+else
+  read -rp "$(echo -e "  ${CYAN}?${RESET} Haiku model ${DIM}[${DEFAULT_HAIKU}]${RESET}: ")" ANTHROPIC_HAIKU_MODEL
+  ANTHROPIC_HAIKU_MODEL="${ANTHROPIC_HAIKU_MODEL:-$DEFAULT_HAIKU}"
+fi
 
-select_option "Settings location" \
-  "Home directory|~/.claude/settings.json, default" \
-  "Current directory|./.claude/settings.json" \
-  "Custom path|enter your own path"
-SETTINGS_CHOICE="$SELECT_RESULT"
+# ── Settings location ───────────────────────────────────────────────────────
+if [[ -n "$CLI_SETTINGS_LOCATION" ]]; then
+  case "$CLI_SETTINGS_LOCATION" in
+    home) SETTINGS_BASE="$HOME" ;;
+    cwd)  SETTINGS_BASE="$(cd "$(pwd)" && pwd)" ;;
+    *)
+      CLI_SETTINGS_LOCATION="${CLI_SETTINGS_LOCATION/#\~/$HOME}"
+      mkdir -p "$CLI_SETTINGS_LOCATION"
+      SETTINGS_BASE="$(cd "$CLI_SETTINGS_LOCATION" && pwd)"
+      ;;
+  esac
+else
+  select_option "Settings location" \
+    "Home directory|~/.claude/settings.json, default" \
+    "Current directory|./.claude/settings.json" \
+    "Custom path|enter your own path"
+  SETTINGS_CHOICE="$SELECT_RESULT"
 
-case "$SETTINGS_CHOICE" in
-  1)
-    SETTINGS_BASE="$HOME"
-    ;;
-  2)
-    SETTINGS_BASE="$(cd "$(pwd)" && pwd)"
-    ;;
-  3)
-    read -rp "$(echo -e "  ${CYAN}?${RESET} Base path: ")" CUSTOM_PATH
-    [[ -z "$CUSTOM_PATH" ]] && { error "Custom path is required."; exit 1; }
-    # Expand ~ if present and resolve to absolute path
-    CUSTOM_PATH="${CUSTOM_PATH/#\~/$HOME}"
-    mkdir -p "$CUSTOM_PATH"
-    SETTINGS_BASE="$(cd "$CUSTOM_PATH" && pwd)"
-    ;;
-esac
+  case "$SETTINGS_CHOICE" in
+    1)
+      SETTINGS_BASE="$HOME"
+      ;;
+    2)
+      SETTINGS_BASE="$(cd "$(pwd)" && pwd)"
+      ;;
+    3)
+      read -rp "$(echo -e "  ${CYAN}?${RESET} Base path: ")" CUSTOM_PATH
+      [[ -z "$CUSTOM_PATH" ]] && { error "Custom path is required."; exit 1; }
+      CUSTOM_PATH="${CUSTOM_PATH/#\~/$HOME}"
+      mkdir -p "$CUSTOM_PATH"
+      SETTINGS_BASE="$(cd "$CUSTOM_PATH" && pwd)"
+      ;;
+  esac
+fi
 
-select_option "PAT lifetime" \
-  "1 day|default" \
-  "3 days|" \
-  "5 days|" \
-  "7 days|"
-PAT_LIFE_CHOICE="$SELECT_RESULT"
+# ── PAT lifetime ────────────────────────────────────────────────────────────
+if [[ -n "$CLI_PAT_LIFETIME" ]]; then
+  case "$CLI_PAT_LIFETIME" in
+    1) PAT_LIFETIME_SECONDS=86400;  PAT_LIFETIME_LABEL="1 day" ;;
+    3) PAT_LIFETIME_SECONDS=259200; PAT_LIFETIME_LABEL="3 days" ;;
+    5) PAT_LIFETIME_SECONDS=432000; PAT_LIFETIME_LABEL="5 days" ;;
+    7) PAT_LIFETIME_SECONDS=604800; PAT_LIFETIME_LABEL="7 days" ;;
+    *) error "Invalid --pat-lifetime: $CLI_PAT_LIFETIME. Use 1, 3, 5, or 7."; exit 1 ;;
+  esac
+else
+  select_option "PAT lifetime" \
+    "1 day|default" \
+    "3 days|" \
+    "5 days|" \
+    "7 days|"
+  PAT_LIFE_CHOICE="$SELECT_RESULT"
 
-case "$PAT_LIFE_CHOICE" in
-  1) PAT_LIFETIME_SECONDS=86400;  PAT_LIFETIME_LABEL="1 day" ;;
-  2) PAT_LIFETIME_SECONDS=259200; PAT_LIFETIME_LABEL="3 days" ;;
-  3) PAT_LIFETIME_SECONDS=432000; PAT_LIFETIME_LABEL="5 days" ;;
-  4) PAT_LIFETIME_SECONDS=604800; PAT_LIFETIME_LABEL="7 days" ;;
-esac
+  case "$PAT_LIFE_CHOICE" in
+    1) PAT_LIFETIME_SECONDS=86400;  PAT_LIFETIME_LABEL="1 day" ;;
+    2) PAT_LIFETIME_SECONDS=259200; PAT_LIFETIME_LABEL="3 days" ;;
+    3) PAT_LIFETIME_SECONDS=432000; PAT_LIFETIME_LABEL="5 days" ;;
+    4) PAT_LIFETIME_SECONDS=604800; PAT_LIFETIME_LABEL="7 days" ;;
+  esac
+fi
 
 SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
 HELPER_FILE="${SETTINGS_BASE}/.claude/fmapi-key-helper.sh"
@@ -613,6 +966,34 @@ jq -n --arg tok "$INITIAL_PAT" --argjson exp "$PAT_EXPIRY_EPOCH" --argjson lt "$
 chmod 600 "$seed_tmp"
 mv "$seed_tmp" "$CACHE_FILE"
 success "Cache seeded at ${CACHE_FILE}."
+
+# ── Self-install plugin ───────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/.claude-plugin/plugin.json" ]]; then
+  PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
+  mkdir -p "$(dirname "$PLUGINS_FILE")"
+
+  NEEDS_INSTALL=true
+  if [[ -f "$PLUGINS_FILE" ]]; then
+    existing_path=$(jq -r '.["fmapi-codingagent"].installPath // empty' "$PLUGINS_FILE" 2>/dev/null) || true
+    [[ "$existing_path" == "$SCRIPT_DIR" ]] && NEEDS_INSTALL=false
+  fi
+
+  if [[ "$NEEDS_INSTALL" == true ]]; then
+    if [[ -f "$PLUGINS_FILE" ]]; then
+      plugin_tmp=$(mktemp "${PLUGINS_FILE}.XXXXXX")
+      _CLEANUP_FILES+=("$plugin_tmp")
+      jq --arg path "$SCRIPT_DIR" \
+        '.["fmapi-codingagent"] = {"scope": "user", "installPath": $path}' \
+        "$PLUGINS_FILE" > "$plugin_tmp"
+      mv "$plugin_tmp" "$PLUGINS_FILE"
+    else
+      jq -n --arg path "$SCRIPT_DIR" \
+        '{"fmapi-codingagent": {"scope": "user", "installPath": $path}}' > "$PLUGINS_FILE"
+    fi
+    success "Plugin registered (skills: /fmapi-codingagent-status, /fmapi-codingagent-refresh, /fmapi-codingagent-setup)."
+  fi
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
