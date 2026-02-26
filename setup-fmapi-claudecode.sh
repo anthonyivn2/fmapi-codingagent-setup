@@ -180,6 +180,93 @@ discover_config() {
   done
 }
 
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+# Get an OAuth token for the given profile (or $CFG_PROFILE).
+# Prints the token on stdout, returns 1 on failure.
+_get_oauth_token() {
+  local profile="${1:-$CFG_PROFILE}"
+  [[ -z "$profile" ]] && return 1
+  command -v databricks &>/dev/null || return 1
+  local tok=""
+  tok=$(databricks auth token --profile "$profile" --output json 2>/dev/null \
+    | jq -r '.access_token // empty') || true
+  [[ -n "$tok" ]] && { echo "$tok"; return 0; }
+  return 1
+}
+
+# Fetch all serving endpoints into _ENDPOINTS_JSON.
+# Requires databricks CLI and a valid profile. Returns 1 on failure.
+_ENDPOINTS_JSON=""
+_fetch_endpoints() {
+  local profile="${1:-$CFG_PROFILE}"
+  _ENDPOINTS_JSON=""
+  [[ -z "$profile" ]] && return 1
+  _ENDPOINTS_JSON=$(databricks serving-endpoints list --profile "$profile" --output json 2>/dev/null) || true
+  [[ -n "$_ENDPOINTS_JSON" ]] && return 0
+  return 1
+}
+
+# Validate configured models against _ENDPOINTS_JSON.
+# Prints PASS/WARN/FAIL/SKIP per model. Sets _VALIDATE_ALL_PASS=true|false.
+_VALIDATE_ALL_PASS=true
+_validate_models_report() {
+  _VALIDATE_ALL_PASS=true
+  local models=()
+  local labels=()
+
+  # Build list of (label, model_name) pairs — skip unconfigured
+  if [[ -n "$CFG_MODEL" ]]; then
+    labels+=("Model")
+    models+=("$CFG_MODEL")
+  fi
+  if [[ -n "$CFG_OPUS" ]]; then
+    labels+=("Opus")
+    models+=("$CFG_OPUS")
+  fi
+  if [[ -n "$CFG_SONNET" ]]; then
+    labels+=("Sonnet")
+    models+=("$CFG_SONNET")
+  fi
+  if [[ -n "$CFG_HAIKU" ]]; then
+    labels+=("Haiku")
+    models+=("$CFG_HAIKU")
+  fi
+
+  if [[ ${#models[@]} -eq 0 ]]; then
+    echo -e "  ${DIM}SKIP${RESET}  No models configured"
+    return 0
+  fi
+
+  local i
+  for i in "${!models[@]}"; do
+    local label="${labels[$i]}"
+    local model="${models[$i]}"
+    local padded
+    padded=$(printf '%-8s' "$label")
+
+    if [[ -z "$_ENDPOINTS_JSON" ]]; then
+      echo -e "  ${YELLOW}${BOLD}WARN${RESET}  ${padded}${model}  ${DIM}(could not fetch endpoints)${RESET}"
+      _VALIDATE_ALL_PASS=false
+      continue
+    fi
+
+    local state=""
+    state=$(echo "$_ENDPOINTS_JSON" | jq -r --arg name "$model" \
+      '.[] | select(.name == $name) | .state.ready // .state // "UNKNOWN"' 2>/dev/null | head -1) || true
+
+    if [[ -z "$state" ]]; then
+      echo -e "  ${RED}${BOLD}FAIL${RESET}  ${padded}${model}  ${DIM}(not found)${RESET}"
+      _VALIDATE_ALL_PASS=false
+    elif [[ "$state" == "READY" ]]; then
+      echo -e "  ${GREEN}${BOLD}PASS${RESET}  ${padded}${model}"
+    else
+      echo -e "  ${YELLOW}${BOLD}WARN${RESET}  ${padded}${model}  ${DIM}(state: ${state})${RESET}"
+      _VALIDATE_ALL_PASS=false
+    fi
+  done
+}
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 do_status() {
@@ -403,6 +490,311 @@ do_uninstall() {
   echo -e "\n${GREEN}${BOLD}  Uninstall complete!${RESET}\n"
 }
 
+do_list_models() {
+  require_cmd jq "jq is required for list-models. Install with: brew install jq"
+  require_cmd databricks "Databricks CLI is required for list-models. Install with: brew tap databricks/tap && brew install databricks"
+
+  discover_config
+
+  if [[ "$CFG_FOUND" != true ]]; then
+    error "No FMAPI configuration found. Run setup first."
+    exit 1
+  fi
+
+  [[ -z "$CFG_PROFILE" ]] && { error "Could not determine profile from helper script."; exit 1; }
+  [[ -z "$CFG_HOST" ]] && { error "Could not determine host from helper script."; exit 1; }
+
+  # Verify OAuth is valid
+  if ! _get_oauth_token "$CFG_PROFILE" >/dev/null 2>&1; then
+    error "OAuth session expired or invalid. Run: bash setup-fmapi-claudecode.sh --reauth"
+    exit 1
+  fi
+
+  echo -e "\n${BOLD}  FMAPI Anthropic Claude Serving Endpoints${RESET}"
+  echo -e "  ${DIM}Workspace: ${CFG_HOST}${RESET}\n"
+
+  if ! _fetch_endpoints "$CFG_PROFILE"; then
+    error "Failed to fetch serving endpoints. Check your network and profile."
+    exit 1
+  fi
+
+  # Build configured models set for highlighting
+  local configured_models=()
+  [[ -n "$CFG_MODEL" ]] && configured_models+=("$CFG_MODEL")
+  [[ -n "$CFG_OPUS" ]] && configured_models+=("$CFG_OPUS")
+  [[ -n "$CFG_SONNET" ]] && configured_models+=("$CFG_SONNET")
+  [[ -n "$CFG_HAIKU" ]] && configured_models+=("$CFG_HAIKU")
+
+  # Filter to Claude/Anthropic endpoints only
+  local filtered=""
+  filtered=$(echo "$_ENDPOINTS_JSON" | jq '[.[] | select(.name | test("claude|anthropic"; "i"))]') || true
+  local count=""
+  count=$(echo "$filtered" | jq 'length') || true
+  if [[ "$count" == "0" || -z "$count" ]]; then
+    info "No Claude/Anthropic serving endpoints found in this workspace."
+    echo ""
+    exit 0
+  fi
+
+  # Print table header — pad plain text first, then wrap with BOLD
+  local col_w=44
+  local state_w=12
+  local hdr_name hdr_state
+  hdr_name=$(printf "%-${col_w}s" "ENDPOINT NAME")
+  hdr_state=$(printf "%-${state_w}s" "STATE")
+  echo -e "     ${BOLD}${hdr_name}${RESET} ${BOLD}${hdr_state}${RESET} ${BOLD}TYPE${RESET}"
+  echo -e "  ${DIM}$(printf '%.0s─' {1..70})${RESET}"
+
+  # Print each endpoint — pad plain text first, then wrap with color to keep columns aligned
+  echo "$filtered" | jq -r '.[] | [.name, (.state.ready // .state // "UNKNOWN"), (.endpoint_type // .task // "unknown")] | @tsv' 2>/dev/null \
+  | while IFS=$'\t' read -r name state etype; do
+    local marker="   "
+    local display_name="$name"
+    if [[ ${#display_name} -gt $col_w ]]; then
+      display_name="${display_name:0:$((col_w - 1))}…"
+    fi
+    local padded_name padded_state
+    padded_name=$(printf "%-${col_w}s" "$display_name")
+    padded_state=$(printf "%-${state_w}s" "$state")
+
+    # Highlight currently configured models
+    if array_contains "$name" ${configured_models[@]+"${configured_models[@]}"}; then
+      marker=" ${GREEN}>${RESET} "
+      padded_name="${GREEN}${BOLD}${padded_name}${RESET}"
+    fi
+
+    if [[ "$state" == "READY" ]]; then
+      padded_state="${GREEN}$(printf "%-${state_w}s" "$state")${RESET}"
+    elif [[ "$state" == "NOT_READY" ]]; then
+      padded_state="${YELLOW}$(printf "%-${state_w}s" "$state")${RESET}"
+    fi
+
+    echo -e "  ${marker}${padded_name} ${padded_state} ${etype}"
+  done
+
+  # Legend
+  echo ""
+  echo -e "  ${GREEN}>${RESET} ${DIM}Currently configured${RESET}"
+  echo ""
+}
+
+do_validate_models() {
+  require_cmd jq "jq is required for validate-models. Install with: brew install jq"
+  require_cmd databricks "Databricks CLI is required for validate-models. Install with: brew tap databricks/tap && brew install databricks"
+
+  discover_config
+
+  if [[ "$CFG_FOUND" != true ]]; then
+    error "No FMAPI configuration found. Run setup first."
+    exit 1
+  fi
+
+  [[ -z "$CFG_PROFILE" ]] && { error "Could not determine profile from helper script."; exit 1; }
+
+  # Verify OAuth is valid
+  if ! _get_oauth_token "$CFG_PROFILE" >/dev/null 2>&1; then
+    error "OAuth session expired or invalid. Run: bash setup-fmapi-claudecode.sh --reauth"
+    exit 1
+  fi
+
+  echo -e "\n${BOLD}  FMAPI Model Validation${RESET}\n"
+
+  if ! _fetch_endpoints "$CFG_PROFILE"; then
+    error "Failed to fetch serving endpoints. Check your network and profile."
+    exit 1
+  fi
+
+  _validate_models_report
+
+  echo ""
+
+  if [[ "$_VALIDATE_ALL_PASS" != true ]]; then
+    info "Some models failed validation. Run ${CYAN}--list-models${RESET} to see available endpoints."
+    echo ""
+    exit 1
+  fi
+
+  success "All configured models are available and ready."
+  echo ""
+}
+
+do_doctor() {
+  echo -e "\n${BOLD}  FMAPI Doctor${RESET}\n"
+
+  local any_fail=false
+
+  # ── 1. Dependencies ──────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Dependencies${RESET}"
+  local deps_ok=true
+
+  for dep_name in jq databricks claude curl; do
+    if command -v "$dep_name" &>/dev/null; then
+      local ver=""
+      case "$dep_name" in
+        jq)         ver=$(jq --version 2>/dev/null || echo "unknown") ;;
+        databricks) ver=$(databricks --version 2>/dev/null | head -1 || echo "unknown") ;;
+        claude)     ver=$(claude --version 2>/dev/null | head -1 || echo "unknown") ;;
+        curl)       ver=$(curl --version 2>/dev/null | head -1 || echo "unknown") ;;
+      esac
+      echo -e "  ${GREEN}${BOLD}PASS${RESET}  ${dep_name}  ${DIM}${ver}${RESET}"
+    else
+      local fix=""
+      case "$dep_name" in
+        jq)         fix="brew install jq" ;;
+        databricks) fix="brew tap databricks/tap && brew install databricks" ;;
+        claude)     fix="curl -fsSL https://claude.ai/install.sh | bash" ;;
+        curl)       fix="brew install curl" ;;
+      esac
+      echo -e "  ${RED}${BOLD}FAIL${RESET}  ${dep_name}  ${DIM}Fix: ${fix}${RESET}"
+      deps_ok=false
+      any_fail=true
+    fi
+  done
+  echo ""
+
+  # ── 2. Configuration ─────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Configuration${RESET}"
+
+  if ! command -v jq &>/dev/null; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  Cannot check configuration (jq not installed)"
+    echo ""
+    discover_config  # still sets CFG_FOUND=false
+  else
+    discover_config
+
+    if [[ "$CFG_FOUND" != true ]]; then
+      echo -e "  ${RED}${BOLD}FAIL${RESET}  No FMAPI configuration found  ${DIM}Fix: run setup first${RESET}"
+      any_fail=true
+      echo ""
+    else
+      # Settings file exists and is valid JSON
+      if [[ -f "$CFG_SETTINGS_FILE" ]]; then
+        if jq empty "$CFG_SETTINGS_FILE" 2>/dev/null; then
+          echo -e "  ${GREEN}${BOLD}PASS${RESET}  Settings file is valid JSON  ${DIM}${CFG_SETTINGS_FILE}${RESET}"
+        else
+          echo -e "  ${RED}${BOLD}FAIL${RESET}  Settings file is invalid JSON  ${DIM}${CFG_SETTINGS_FILE}${RESET}"
+          any_fail=true
+        fi
+      else
+        echo -e "  ${RED}${BOLD}FAIL${RESET}  Settings file not found  ${DIM}${CFG_SETTINGS_FILE}${RESET}"
+        any_fail=true
+      fi
+
+      # Required FMAPI keys present
+      local required_keys=("ANTHROPIC_MODEL" "ANTHROPIC_BASE_URL" "ANTHROPIC_DEFAULT_OPUS_MODEL" "ANTHROPIC_DEFAULT_SONNET_MODEL" "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+      local missing_keys=()
+      for key in "${required_keys[@]}"; do
+        local val=""
+        val=$(jq -r ".env.${key} // empty" "$CFG_SETTINGS_FILE" 2>/dev/null) || true
+        [[ -z "$val" ]] && missing_keys+=("$key")
+      done
+      if [[ ${#missing_keys[@]} -eq 0 ]]; then
+        echo -e "  ${GREEN}${BOLD}PASS${RESET}  All required FMAPI env keys present"
+      else
+        echo -e "  ${RED}${BOLD}FAIL${RESET}  Missing env keys: ${missing_keys[*]}  ${DIM}Fix: re-run setup${RESET}"
+        any_fail=true
+      fi
+
+      # Helper script exists and is executable
+      if [[ -n "$CFG_HELPER_FILE" && -f "$CFG_HELPER_FILE" ]]; then
+        if [[ -x "$CFG_HELPER_FILE" ]]; then
+          echo -e "  ${GREEN}${BOLD}PASS${RESET}  Helper script exists and is executable  ${DIM}${CFG_HELPER_FILE}${RESET}"
+        else
+          echo -e "  ${RED}${BOLD}FAIL${RESET}  Helper script not executable  ${DIM}Fix: chmod 700 ${CFG_HELPER_FILE}${RESET}"
+          any_fail=true
+        fi
+      elif [[ -n "$CFG_HELPER_FILE" ]]; then
+        echo -e "  ${RED}${BOLD}FAIL${RESET}  Helper script not found  ${DIM}${CFG_HELPER_FILE}${RESET}"
+        any_fail=true
+      fi
+      echo ""
+    fi
+  fi
+
+  # ── 3. Profile ───────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Profile${RESET}"
+  if [[ -z "$CFG_PROFILE" ]]; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  No profile configured"
+  elif [[ -f "$HOME/.databrickscfg" ]] && grep -q "^\[${CFG_PROFILE}\]" "$HOME/.databrickscfg" 2>/dev/null; then
+    echo -e "  ${GREEN}${BOLD}PASS${RESET}  Profile '${CFG_PROFILE}' exists in ~/.databrickscfg"
+  else
+    echo -e "  ${RED}${BOLD}FAIL${RESET}  Profile '${CFG_PROFILE}' not found in ~/.databrickscfg  ${DIM}Fix: --reauth or re-run setup${RESET}"
+    any_fail=true
+  fi
+  echo ""
+
+  # ── 4. Auth ──────────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Auth${RESET}"
+  if [[ -z "$CFG_PROFILE" ]]; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  No profile configured"
+  elif ! command -v databricks &>/dev/null; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  databricks CLI not installed"
+  else
+    if _get_oauth_token "$CFG_PROFILE" >/dev/null 2>&1; then
+      echo -e "  ${GREEN}${BOLD}PASS${RESET}  OAuth token is valid"
+    else
+      echo -e "  ${RED}${BOLD}FAIL${RESET}  OAuth token expired or invalid  ${DIM}Fix: --reauth${RESET}"
+      any_fail=true
+    fi
+  fi
+  echo ""
+
+  # ── 5. Connectivity ─────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Connectivity${RESET}"
+  if [[ -z "$CFG_HOST" ]]; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  No host configured"
+  elif ! command -v curl &>/dev/null; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  curl not installed"
+  else
+    local oauth_tok=""
+    oauth_tok=$(_get_oauth_token "$CFG_PROFILE" 2>/dev/null) || true
+    if [[ -z "$oauth_tok" ]]; then
+      echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  Cannot test connectivity (no valid token)"
+    else
+      local http_code=""
+      http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+        -H "Authorization: Bearer ${oauth_tok}" \
+        "${CFG_HOST}/api/2.0/serving-endpoints" 2>/dev/null) || true
+      if [[ "$http_code" == "200" ]]; then
+        echo -e "  ${GREEN}${BOLD}PASS${RESET}  Databricks API reachable  ${DIM}${CFG_HOST}${RESET}"
+      elif [[ -n "$http_code" && "$http_code" != "000" ]]; then
+        echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Databricks API returned HTTP ${http_code}  ${DIM}${CFG_HOST}${RESET}"
+        any_fail=true
+      else
+        echo -e "  ${RED}${BOLD}FAIL${RESET}  Cannot reach Databricks API  ${DIM}Fix: check network and ${CFG_HOST}${RESET}"
+        any_fail=true
+      fi
+    fi
+  fi
+  echo ""
+
+  # ── 6. Models ────────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Models${RESET}"
+  if [[ "$CFG_FOUND" != true ]]; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  No configuration found"
+  elif [[ -z "$CFG_PROFILE" ]] || ! command -v databricks &>/dev/null; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  Cannot validate models (missing profile or CLI)"
+  elif ! _get_oauth_token "$CFG_PROFILE" >/dev/null 2>&1; then
+    echo -e "  ${YELLOW}${BOLD}SKIP${RESET}  Cannot validate models (auth failed)"
+  else
+    _fetch_endpoints "$CFG_PROFILE" || true
+    _validate_models_report
+    if [[ "$_VALIDATE_ALL_PASS" != true ]]; then
+      any_fail=true
+    fi
+  fi
+  echo ""
+
+  # ── Summary ──────────────────────────────────────────────────────────────
+  if [[ "$any_fail" == true ]]; then
+    echo -e "  ${RED}${BOLD}Some checks failed.${RESET} Review the issues above.\n"
+    exit 1
+  else
+    echo -e "  ${GREEN}${BOLD}All checks passed!${RESET}\n"
+    exit 0
+  fi
+}
+
 show_help() {
   cat <<'HELPTEXT'
 Usage: bash setup-fmapi-claudecode.sh [OPTIONS]
@@ -417,6 +809,9 @@ Prerequisites:
 Commands:
   --status              Show FMAPI configuration health dashboard
   --reauth              Re-authenticate Databricks OAuth session
+  --doctor              Run comprehensive diagnostics (deps, config, auth, connectivity, models)
+  --list-models         List all serving endpoints in the workspace
+  --validate-models     Validate configured models exist and are ready
   --uninstall           Remove FMAPI helper scripts and settings
   -h, --help            Show this help message
 
@@ -447,6 +842,15 @@ Examples:
   # Re-authenticate expired OAuth session
   bash setup-fmapi-claudecode.sh --reauth
 
+  # Run full diagnostics
+  bash setup-fmapi-claudecode.sh --doctor
+
+  # List available serving endpoints
+  bash setup-fmapi-claudecode.sh --list-models
+
+  # Validate configured models
+  bash setup-fmapi-claudecode.sh --validate-models
+
   # Uninstall all FMAPI artifacts
   bash setup-fmapi-claudecode.sh --uninstall
 
@@ -455,7 +859,8 @@ Troubleshooting:
   "No config found"    Run setup first (without --status/--reauth)
   Wrong workspace URL  URL must start with https:// and have no trailing slash
   Permission denied    Helper script needs execute permission (chmod 700)
-  Model not found      Check available models in your Databricks workspace
+  Model not found      Run: bash setup-fmapi-claudecode.sh --list-models
+  Unclear issue        Run: bash setup-fmapi-claudecode.sh --doctor
 HELPTEXT
   exit 0
 }
@@ -790,6 +1195,9 @@ while [[ $# -gt 0 ]]; do
     --status)       ACTION="status"; shift ;;
     --reauth)       ACTION="reauth"; shift ;;
     --uninstall)    ACTION="uninstall"; shift ;;
+    --doctor)       ACTION="doctor"; shift ;;
+    --list-models)  ACTION="list-models"; shift ;;
+    --validate-models) ACTION="validate-models"; shift ;;
     --host)         CLI_HOST="${2:-}"; [[ -z "$CLI_HOST" ]] && { error "--host requires a URL."; exit 1; }; shift 2 ;;
     --profile)      CLI_PROFILE="${2:-}"; [[ -z "$CLI_PROFILE" ]] && { error "--profile requires a name."; exit 1; }; shift 2 ;;
     --model)        CLI_MODEL="${2:-}"; [[ -z "$CLI_MODEL" ]] && { error "--model requires a value."; exit 1; }; shift 2 ;;
@@ -808,9 +1216,12 @@ NON_INTERACTIVE=false
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 case "${ACTION}" in
-  status)    do_status; exit 0 ;;
-  reauth)    do_reauth; exit 0 ;;
-  uninstall) do_uninstall; exit 0 ;;
+  status)          do_status; exit 0 ;;
+  reauth)          do_reauth; exit 0 ;;
+  doctor)          do_doctor; exit 0 ;;
+  list-models)     do_list_models; exit 0 ;;
+  validate-models) do_validate_models; exit 0 ;;
+  uninstall)       do_uninstall; exit 0 ;;
 esac
 
 do_setup

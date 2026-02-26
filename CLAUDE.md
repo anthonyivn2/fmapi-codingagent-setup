@@ -7,14 +7,17 @@ This repo contains setup scripts and a Claude Code plugin that configure coding 
 ## Repository Structure
 
 ```
-setup-fmapi-claudecode.sh                  # Claude Code setup script (bash)
-.claude-plugin/plugin.json                 # Claude Code plugin manifest
-skills/fmapi-codingagent-status/SKILL.md   # /fmapi-codingagent-status skill
-skills/fmapi-codingagent-reauth/SKILL.md   # /fmapi-codingagent-reauth skill
-skills/fmapi-codingagent-setup/SKILL.md    # /fmapi-codingagent-setup skill
-README.md                                  # User-facing documentation
-CLAUDE.md                                  # This file
-.gitignore                                 # Ignores generated files and Python artifacts
+setup-fmapi-claudecode.sh                          # Claude Code setup script (bash)
+.claude-plugin/plugin.json                         # Claude Code plugin manifest
+skills/fmapi-codingagent-status/SKILL.md           # /fmapi-codingagent-status skill
+skills/fmapi-codingagent-reauth/SKILL.md           # /fmapi-codingagent-reauth skill
+skills/fmapi-codingagent-setup/SKILL.md            # /fmapi-codingagent-setup skill
+skills/fmapi-codingagent-doctor/SKILL.md           # /fmapi-codingagent-doctor skill
+skills/fmapi-codingagent-list-models/SKILL.md      # /fmapi-codingagent-list-models skill
+skills/fmapi-codingagent-validate-models/SKILL.md  # /fmapi-codingagent-validate-models skill
+README.md                                          # User-facing documentation
+CLAUDE.md                                          # This file
+.gitignore                                         # Ignores generated files and Python artifacts
 ```
 
 ## Supported Coding Agents
@@ -27,19 +30,22 @@ CLAUDE.md                                  # This file
 
 ## Plugin Skills
 
-The repo is a Claude Code plugin providing three slash-command skills:
+The repo is a Claude Code plugin providing six slash-command skills:
 
 | Skill | Description |
 |---|---|
 | `/fmapi-codingagent-status` | Show FMAPI configuration health dashboard (OAuth health, model config) |
 | `/fmapi-codingagent-reauth` | Re-authenticate Databricks OAuth session |
 | `/fmapi-codingagent-setup` | Run full FMAPI setup (interactive or non-interactive with CLI flags) |
+| `/fmapi-codingagent-doctor` | Run comprehensive diagnostics (deps, config, profile, auth, connectivity, models) |
+| `/fmapi-codingagent-list-models` | List all serving endpoints in the workspace |
+| `/fmapi-codingagent-validate-models` | Validate configured models exist and are ready |
 
 The plugin is automatically registered in `~/.claude/plugins/installed_plugins.json` when the setup script runs. It is deregistered on `--uninstall`.
 
 ## Key Concepts
 
-- **`setup-fmapi-claudecode.sh`** — Bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and generates `fmapi-key-helper.sh`. Supports `--status`, `--reauth`, `--uninstall`, and CLI flags for non-interactive setup. Passing `--host` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
+- **`setup-fmapi-claudecode.sh`** — Bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and generates `fmapi-key-helper.sh`. Supports `--status`, `--reauth`, `--doctor`, `--list-models`, `--validate-models`, `--uninstall`, and CLI flags for non-interactive setup. Passing `--host` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
 - **`.claude-plugin/plugin.json`** — Plugin manifest that registers the repo as a Claude Code plugin with the `skills/` directory.
 - **`skills/*/SKILL.md`** — Skill definitions that instruct Claude how to invoke the setup script with the appropriate flags.
 - **`fmapi-key-helper.sh`** — A POSIX `/bin/sh` script generated alongside `settings.json` that Claude Code invokes automatically via the `apiKeyHelper` setting to obtain OAuth access tokens on demand. The Databricks CLI handles token refresh transparently.
@@ -51,6 +57,9 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 |---|---|
 | `--status` | Show configuration health dashboard |
 | `--reauth` | Re-authenticate Databricks OAuth session |
+| `--doctor` | Run comprehensive diagnostics (deps, config, profile, auth, connectivity, models) |
+| `--list-models` | List all serving endpoints in the workspace |
+| `--validate-models` | Validate configured models exist and are ready |
 | `--uninstall` | Remove all FMAPI artifacts and plugin registration |
 | `-h`, `--help` | Show help |
 | `--host URL` | Databricks workspace URL (enables non-interactive mode) |
@@ -88,7 +97,11 @@ There are no automated tests. To verify changes:
 8. Re-run the setup script to confirm idempotency (defaults pre-populated).
 9. Confirm `~/.claude/plugins/installed_plugins.json` has `fmapi-codingagent` entry.
 10. Run `claude` and confirm it works with FMAPI.
-11. Run `bash setup-fmapi-claudecode.sh --uninstall` and confirm cleanup (including plugin deregistration).
+11. Run `bash setup-fmapi-claudecode.sh --doctor` — confirm all 6 diagnostic categories display.
+12. Run `bash setup-fmapi-claudecode.sh --list-models` — confirm endpoint table with highlighting.
+13. Run `bash setup-fmapi-claudecode.sh --validate-models` — confirm per-model validation output.
+14. Run `--doctor`, `--list-models`, `--validate-models` with no prior config — should error gracefully.
+15. Run `bash setup-fmapi-claudecode.sh --uninstall` and confirm cleanup (including plugin deregistration).
 
 ## Abbreviations
 

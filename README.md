@@ -70,6 +70,9 @@ The setup script automatically registers this repo as a Claude Code plugin, maki
 | `/fmapi-codingagent-status` | Check FMAPI configuration health &mdash; OAuth session, workspace, and model settings |
 | `/fmapi-codingagent-reauth` | Re-authenticate the Databricks OAuth session |
 | `/fmapi-codingagent-setup` | Run full FMAPI setup (interactive or non-interactive with CLI flags) |
+| `/fmapi-codingagent-doctor` | Run comprehensive diagnostics (dependencies, config, auth, connectivity, models) |
+| `/fmapi-codingagent-list-models` | List all serving endpoints available in the workspace |
+| `/fmapi-codingagent-validate-models` | Validate that configured models exist and are ready |
 
 These skills allow you to manage your FMAPI configuration without leaving Claude Code.
 
@@ -97,6 +100,49 @@ bash setup-fmapi-claudecode.sh --reauth
 
 This triggers `databricks auth login` for your configured profile and verifies the new session is valid.
 
+### Diagnostics
+
+Run comprehensive diagnostics to identify issues with your FMAPI setup:
+
+```bash
+bash setup-fmapi-claudecode.sh --doctor
+```
+
+The doctor checks six categories:
+
+| Category | What it checks |
+|---|---|
+| **Dependencies** | jq, databricks, claude, and curl are installed; reports versions |
+| **Configuration** | Settings file is valid JSON, all required FMAPI keys present, helper script exists and is executable |
+| **Profile** | Databricks CLI profile exists in `~/.databrickscfg` |
+| **Auth** | OAuth token is valid |
+| **Connectivity** | HTTP reachability to the Databricks serving endpoints API |
+| **Models** | All configured model names exist as endpoints and are READY |
+
+Each check reports **PASS**, **FAIL**, **WARN**, or **SKIP** with actionable fix suggestions. Exits with code 1 if any checks fail.
+
+### Model Management
+
+#### List available models
+
+Discover all serving endpoints in your Databricks workspace:
+
+```bash
+bash setup-fmapi-claudecode.sh --list-models
+```
+
+The output shows a table of all serving endpoints with their name, state, and type. Currently configured models are highlighted in green (`>`), and Claude/Anthropic endpoints are highlighted in cyan (`*`).
+
+#### Validate configured models
+
+Confirm that all configured model names exist as serving endpoints and are ready:
+
+```bash
+bash setup-fmapi-claudecode.sh --validate-models
+```
+
+Reports per-model status: **PASS** (exists and READY), **WARN** (exists but not READY), **FAIL** (not found), or **SKIP** (not configured). Exits with code 1 if any models fail validation.
+
 ### CLI Reference
 
 ```
@@ -105,6 +151,9 @@ Usage: bash setup-fmapi-claudecode.sh [OPTIONS]
 Commands:
   --status              Show FMAPI configuration health dashboard
   --reauth              Re-authenticate Databricks OAuth session
+  --doctor              Run comprehensive diagnostics (deps, config, auth, connectivity, models)
+  --list-models         List all serving endpoints in the workspace
+  --validate-models     Validate configured models exist and are ready
   --uninstall           Remove FMAPI helper scripts and settings
   -h, --help            Show this help message
 
@@ -210,6 +259,12 @@ Run the helper script manually to diagnose: `sh ~/.claude/fmapi-key-helper.sh`. 
 
 **Claude Code returns authentication errors**
 Your OAuth session may have expired. Run `databricks auth login --host <workspace-url> --profile <profile>` to refresh the session, then retry `claude`.
+
+**Model not found or wrong model name**
+Run `bash setup-fmapi-claudecode.sh --list-models` to discover available serving endpoints. Then run `bash setup-fmapi-claudecode.sh --validate-models` to confirm your configured models exist and are ready.
+
+**Unclear issue &mdash; not sure what's wrong**
+Run `bash setup-fmapi-claudecode.sh --doctor` for a comprehensive diagnostic report covering dependencies, configuration, authentication, connectivity, and model validation.
 
 ## OpenAI Codex
 
