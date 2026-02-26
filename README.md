@@ -16,9 +16,7 @@ FMAPI supports various coding agents today. The table below breaks down the Codi
 
 ### Prerequisites
 
-- **macOS** with `zsh` or `bash`
-- [Homebrew](https://brew.sh/) (`brew`)
-- [`jq`](https://jqlang.github.io/jq/) (install with `brew install jq`)
+- **macOS** or **Linux** (dependencies are installed automatically by the setup script)
 - A Databricks workspace with FMAPI enabled
 
 ### Quick Start
@@ -51,15 +49,14 @@ claude
 
 ### Non-Interactive Setup
 
-You can skip interactive prompts by passing CLI flags:
+Pass `--host` to enable non-interactive mode. All other flags auto-default if omitted:
 
 ```bash
 bash setup-fmapi-claudecode.sh \
-  --host https://my-workspace.cloud.databricks.com \
-  --profile my-profile
+  --host https://my-workspace.cloud.databricks.com
 ```
 
-Any flags not provided will be prompted interactively. See [CLI Reference](#cli-reference) for all available flags.
+You can override any default with additional flags. See [CLI Reference](#cli-reference) for all available flags.
 
 ### Plugin Skills
 
@@ -131,7 +128,7 @@ Discover all serving endpoints in your Databricks workspace:
 bash setup-fmapi-claudecode.sh --list-models
 ```
 
-The output shows a table of all serving endpoints with their name, state, and type. Currently configured models are highlighted in green (`>`), and Claude/Anthropic endpoints are highlighted in cyan (`*`).
+The output shows a table of all serving endpoints with their name, state, and type. Currently configured models are highlighted in green (`>`).
 
 #### Validate configured models
 
@@ -173,8 +170,9 @@ Setup options (skip interactive prompts):
 
 #### 1. Installs dependencies
 
-- **Claude Code** &mdash; installed via `curl -fsSL https://claude.ai/install.sh | bash` if not already present.
-- **Databricks CLI** &mdash; installed via Homebrew (`brew tap databricks/tap && brew install databricks`) if not already present.
+- **Claude Code** &mdash; installed via `curl -fsSL https://claude.ai/install.sh | bash` if not already present (cross-platform).
+- **jq** &mdash; installed via Homebrew on macOS, or `apt-get`/`yum` on Linux, if not already present.
+- **Databricks CLI** &mdash; installed via Homebrew on macOS (`brew tap databricks/tap && brew install databricks`), or the official curl installer on Linux, if not already present.
 
 #### 2. Authenticates with Databricks
 

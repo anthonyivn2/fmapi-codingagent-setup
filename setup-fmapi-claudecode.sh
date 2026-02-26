@@ -15,6 +15,8 @@ trap _cleanup EXIT
 BOLD='\033[1m' DIM='\033[2m' RED='\033[31m' GREEN='\033[32m'
 YELLOW='\033[33m' CYAN='\033[36m' RESET='\033[0m'
 
+_OS_TYPE="$(uname -s 2>/dev/null || echo 'Unknown')"
+
 info()    { echo -e "  ${CYAN}::${RESET} $1"; }
 success() { echo -e "  ${GREEN}${BOLD}ok${RESET} $1"; }
 error()   { echo -e "\n  ${RED}${BOLD}!! ERROR${RESET}${RED} $1${RESET}\n" >&2; }
@@ -36,6 +38,15 @@ array_contains() {
 require_cmd() {
   local cmd="$1" msg="$2"
   command -v "$cmd" &>/dev/null || { error "$msg"; exit 1; }
+}
+
+# Platform-appropriate install hint for jq
+_jq_install_hint() {
+  if [[ "$_OS_TYPE" == "Linux" ]]; then
+    echo "sudo apt-get install -y jq  (or sudo yum install -y jq)"
+  else
+    echo "brew install jq"
+  fi
 }
 
 # Prompt for a value, respecting CLI flags and non-interactive mode.
@@ -270,7 +281,7 @@ _validate_models_report() {
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 do_status() {
-  require_cmd jq "jq is required for status. Install with: brew install jq"
+  require_cmd jq "jq is required for status. Install with: $(_jq_install_hint)"
 
   discover_config
 
@@ -322,7 +333,7 @@ do_status() {
 }
 
 do_reauth() {
-  require_cmd jq "jq is required for reauth. Install with: brew install jq"
+  require_cmd jq "jq is required for reauth. Install with: $(_jq_install_hint)"
   require_cmd databricks "Databricks CLI is required for reauth. Install with: brew tap databricks/tap && brew install databricks"
 
   discover_config
@@ -354,7 +365,7 @@ do_reauth() {
 do_uninstall() {
   echo -e "\n${BOLD}  Claude Code x Databricks FMAPI — Uninstall${RESET}\n"
 
-  require_cmd jq "jq is required for uninstall. Install with: brew install jq"
+  require_cmd jq "jq is required for uninstall. Install with: $(_jq_install_hint)"
 
   # ── Discover FMAPI artifacts ──────────────────────────────────────────────
   declare -a helper_scripts=()
@@ -491,7 +502,7 @@ do_uninstall() {
 }
 
 do_list_models() {
-  require_cmd jq "jq is required for list-models. Install with: brew install jq"
+  require_cmd jq "jq is required for list-models. Install with: $(_jq_install_hint)"
   require_cmd databricks "Databricks CLI is required for list-models. Install with: brew tap databricks/tap && brew install databricks"
 
   discover_config
@@ -579,7 +590,7 @@ do_list_models() {
 }
 
 do_validate_models() {
-  require_cmd jq "jq is required for validate-models. Install with: brew install jq"
+  require_cmd jq "jq is required for validate-models. Install with: $(_jq_install_hint)"
   require_cmd databricks "Databricks CLI is required for validate-models. Install with: brew tap databricks/tap && brew install databricks"
 
   discover_config
@@ -640,10 +651,28 @@ do_doctor() {
     else
       local fix=""
       case "$dep_name" in
-        jq)         fix="brew install jq" ;;
-        databricks) fix="brew tap databricks/tap && brew install databricks" ;;
+        jq)
+          if [[ "$_OS_TYPE" == "Linux" ]]; then
+            fix="sudo apt-get install -y jq (or sudo yum install -y jq)"
+          else
+            fix="brew install jq"
+          fi
+          ;;
+        databricks)
+          if [[ "$_OS_TYPE" == "Linux" ]]; then
+            fix="curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh"
+          else
+            fix="brew tap databricks/tap && brew install databricks"
+          fi
+          ;;
         claude)     fix="curl -fsSL https://claude.ai/install.sh | bash" ;;
-        curl)       fix="brew install curl" ;;
+        curl)
+          if [[ "$_OS_TYPE" == "Linux" ]]; then
+            fix="sudo apt-get install -y curl (or sudo yum install -y curl)"
+          else
+            fix="brew install curl"
+          fi
+          ;;
       esac
       echo -e "  ${RED}${BOLD}FAIL${RESET}  ${dep_name}  ${DIM}Fix: ${fix}${RESET}"
       deps_ok=false
@@ -802,7 +831,7 @@ Usage: bash setup-fmapi-claudecode.sh [OPTIONS]
 Sets up Claude Code to use Databricks Foundation Model API (FMAPI).
 
 Prerequisites:
-  - macOS with Homebrew (or install manually: jq, databricks CLI)
+  - macOS or Linux (dependencies installed automatically)
   - A Databricks workspace with Foundation Model API enabled
   - Access to Claude models via your Databricks workspace
 
@@ -964,44 +993,76 @@ gather_config() {
 install_dependencies() {
   echo -e "\n${BOLD}Installing dependencies${RESET}"
 
-  # Homebrew
-  if command -v brew &>/dev/null; then
-    success "Homebrew already installed."
-  else
-    info "Installing Homebrew ..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    # Add brew to PATH for this session (needed on fresh installs)
-    if [[ -x /opt/homebrew/bin/brew ]]; then
-      eval "$(/opt/homebrew/bin/brew shellenv)"
-    elif [[ -x /usr/local/bin/brew ]]; then
-      eval "$(/usr/local/bin/brew shellenv)"
-    fi
-    success "Homebrew installed."
-  fi
+  case "$_OS_TYPE" in
+    Darwin)
+      # ── macOS: use Homebrew ──────────────────────────────────────────────
+      if command -v brew &>/dev/null; then
+        success "Homebrew already installed."
+      else
+        info "Installing Homebrew ..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        if [[ -x /opt/homebrew/bin/brew ]]; then
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [[ -x /usr/local/bin/brew ]]; then
+          eval "$(/usr/local/bin/brew shellenv)"
+        fi
+        success "Homebrew installed."
+      fi
 
-  # jq
-  if command -v jq &>/dev/null; then
-    success "jq already installed."
-  else
-    info "Installing jq ..."
-    brew install jq
-    success "jq installed."
-  fi
+      if command -v jq &>/dev/null; then
+        success "jq already installed."
+      else
+        info "Installing jq ..."
+        brew install jq
+        success "jq installed."
+      fi
 
+      if command -v databricks &>/dev/null; then
+        success "Databricks CLI already installed."
+      else
+        info "Installing Databricks CLI ..."
+        brew tap databricks/tap && brew install databricks
+        success "Databricks CLI installed."
+      fi
+      ;;
+    Linux)
+      # ── Linux: use system package manager + curl installers ──────────────
+      if command -v jq &>/dev/null; then
+        success "jq already installed."
+      else
+        info "Installing jq ..."
+        if command -v apt-get &>/dev/null; then
+          sudo apt-get update -qq && sudo apt-get install -y jq
+        elif command -v yum &>/dev/null; then
+          sudo yum install -y jq
+        else
+          error "Cannot install jq: no supported package manager (apt-get or yum) found."
+          exit 1
+        fi
+        success "jq installed."
+      fi
+
+      if command -v databricks &>/dev/null; then
+        success "Databricks CLI already installed."
+      else
+        info "Installing Databricks CLI ..."
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+        success "Databricks CLI installed."
+      fi
+      ;;
+    *)
+      error "Unsupported OS: ${_OS_TYPE}. This script supports macOS (Darwin) and Linux."
+      exit 1
+      ;;
+  esac
+
+  # Claude Code — cross-platform installer
   if command -v claude &>/dev/null; then
     success "Claude Code already installed."
   else
     info "Installing Claude Code ..."
     curl -fsSL https://claude.ai/install.sh | bash
     success "Claude Code installed."
-  fi
-
-  if command -v databricks &>/dev/null; then
-    success "Databricks CLI already installed."
-  else
-    info "Installing Databricks CLI ..."
-    brew tap databricks/tap && brew install databricks
-    success "Databricks CLI installed."
   fi
 }
 
@@ -1093,6 +1154,16 @@ set -eu
 FMAPI_PROFILE="__PROFILE__"
 FMAPI_HOST="__HOST__"
 
+# Verify required commands exist
+if ! command -v databricks >/dev/null 2>&1; then
+  echo "FMAPI: databricks CLI not found. Install it and ensure it is on your PATH." >&2
+  exit 1
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "FMAPI: jq not found. Install it and ensure it is on your PATH." >&2
+  exit 1
+fi
+
 # Get OAuth access token (databricks CLI auto-refreshes using refresh token)
 token=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
   | jq -r '.access_token // empty') || true
@@ -1110,7 +1181,14 @@ else
 fi
 
 echo "FMAPI: OAuth session expired — attempting re-authentication ..." > "$_out"
-if databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" > "$_out" 2>&1; then
+
+# Use timeout if available (standard on Linux, may not exist on macOS)
+_reauth_cmd="databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE"
+if command -v timeout >/dev/null 2>&1; then
+  _reauth_cmd="timeout 30 $_reauth_cmd"
+fi
+
+if eval "$_reauth_cmd" > "$_out" 2>&1; then
   token=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
     | jq -r '.access_token // empty') || true
   if [ -n "$token" ]; then
@@ -1124,7 +1202,10 @@ echo "FMAPI: Re-authentication failed. Run manually: databricks auth login --hos
 exit 1
 HELPER_SCRIPT
 
-  sed -i '' "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g" "$HELPER_FILE"
+  helper_tmp=$(mktemp "${HELPER_FILE}.XXXXXX")
+  _CLEANUP_FILES+=("$helper_tmp")
+  sed "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g" "$HELPER_FILE" > "$helper_tmp"
+  mv "$helper_tmp" "$HELPER_FILE"
   chmod 700 "$HELPER_FILE"
   success "Helper script written to ${HELPER_FILE}."
 }
@@ -1153,8 +1234,73 @@ register_plugin() {
         jq -n --arg path "$SCRIPT_DIR" \
           '{"fmapi-codingagent": {"scope": "user", "installPath": $path}}' > "$PLUGINS_FILE"
       fi
-      success "Plugin registered (skills: /fmapi-codingagent-status, /fmapi-codingagent-reauth, /fmapi-codingagent-setup)."
+      success "Plugin registered (skills: /fmapi-codingagent-status, /fmapi-codingagent-reauth, /fmapi-codingagent-setup, /fmapi-codingagent-doctor, /fmapi-codingagent-list-models, /fmapi-codingagent-validate-models)."
     fi
+  fi
+}
+
+run_smoke_test() {
+  echo -e "\n${BOLD}Verifying setup${RESET}"
+
+  local warnings=0
+
+  # 1. Helper script executes and returns a token
+  if [[ -x "$HELPER_FILE" ]]; then
+    local helper_token=""
+    helper_token=$("$HELPER_FILE" 2>/dev/null) || true
+    if [[ -n "$helper_token" ]]; then
+      success "Helper script returns a valid token."
+    else
+      echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Helper script did not return a token."
+      (( warnings++ )) || true
+    fi
+  else
+    echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Helper script is not executable: ${HELPER_FILE}"
+    (( warnings++ )) || true
+  fi
+
+  # 2. Workspace reachable via serving-endpoints API
+  local oauth_tok=""
+  oauth_tok=$(databricks auth token --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
+    | jq -r '.access_token // empty') || true
+  if [[ -n "$oauth_tok" ]]; then
+    local http_code=""
+    http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+      -H "Authorization: Bearer ${oauth_tok}" \
+      "${DATABRICKS_HOST}/api/2.0/serving-endpoints" 2>/dev/null) || true
+    if [[ "$http_code" == "200" ]]; then
+      success "Workspace reachable (${DATABRICKS_HOST})."
+    elif [[ -n "$http_code" && "$http_code" != "000" ]]; then
+      echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Workspace returned HTTP ${http_code}."
+      (( warnings++ )) || true
+    else
+      echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Cannot reach workspace at ${DATABRICKS_HOST}."
+      (( warnings++ )) || true
+    fi
+
+    # 3. Configured models exist and are ready
+    # Temporarily set CFG_ vars so _validate_models_report can work
+    local CFG_MODEL="$ANTHROPIC_MODEL"
+    local CFG_OPUS="$ANTHROPIC_OPUS_MODEL"
+    local CFG_SONNET="$ANTHROPIC_SONNET_MODEL"
+    local CFG_HAIKU="$ANTHROPIC_HAIKU_MODEL"
+    local CFG_PROFILE="$DATABRICKS_PROFILE"
+    if _fetch_endpoints "$DATABRICKS_PROFILE"; then
+      _validate_models_report
+      if [[ "$_VALIDATE_ALL_PASS" != true ]]; then
+        (( warnings++ )) || true
+      fi
+    else
+      echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Could not fetch serving endpoints for model validation."
+      (( warnings++ )) || true
+    fi
+  else
+    echo -e "  ${YELLOW}${BOLD}WARN${RESET}  No OAuth token available — skipping connectivity and model checks."
+    (( warnings++ )) || true
+  fi
+
+  if (( warnings > 0 )); then
+    echo -e "\n  ${YELLOW}Setup succeeded with warnings${RESET} — run ${CYAN}--doctor${RESET} for details."
   fi
 }
 
@@ -1180,6 +1326,7 @@ do_setup() {
   write_settings
   write_helper
   register_plugin
+  run_smoke_test
   print_summary
 }
 

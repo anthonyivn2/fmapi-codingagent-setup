@@ -79,7 +79,7 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 - The helper script (`fmapi-key-helper.sh`) must be POSIX `/bin/sh` compatible with `set -eu`. Do not use bash-specific features in the helper.
 - Scripts use `set -euo pipefail` for strict error handling. Any new code must work under these constraints.
 - All generated files must have owner-only permissions. Never store tokens in world-readable files.
-- **Dependencies**: `brew`, `jq`, `curl`, `tput`, `databricks` CLI. Do not introduce additional dependencies without good reason.
+- **Dependencies**: `jq`, `curl`, `tput`, `databricks` CLI. On macOS, `brew` is used for installation; on Linux, `apt-get`/`yum` and curl installers are used. Do not introduce additional dependencies without good reason.
 - **Never commit** `.claude/settings.json`, `fmapi-key-helper.sh`, or other files containing tokens.
 - Use [ShellCheck](https://www.shellcheck.net/) conventions when editing scripts.
 

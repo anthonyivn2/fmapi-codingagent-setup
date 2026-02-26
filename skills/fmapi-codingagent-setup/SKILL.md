@@ -24,12 +24,11 @@ bash "<install-path>/setup-fmapi-claudecode.sh"
 
 ### Non-interactive mode
 
-Pass all required values as CLI flags to skip prompts entirely:
+Pass `--host` to enable non-interactive mode. All other flags auto-default if omitted:
 
 ```bash
 bash "<install-path>/setup-fmapi-claudecode.sh" \
-  --host "https://my-workspace.cloud.databricks.com" \
-  --profile "my-profile"
+  --host "https://my-workspace.cloud.databricks.com"
 ```
 
 ## Available CLI Flags
@@ -45,7 +44,7 @@ bash "<install-path>/setup-fmapi-claudecode.sh" \
 | `--ttl MINUTES` | Token refresh interval in minutes (default: `30`, max: `60`) | `--ttl 45` |
 | `--settings-location PATH` | Where to write settings (`home`, `cwd`, or a custom path) | `--settings-location home` |
 
-When `--host` and `--profile` are both provided along with all other flags, the script runs non-interactively. Any missing flags will be prompted interactively, with existing config values shown as defaults.
+When `--host` is provided, the script runs non-interactively. Other flags auto-default if omitted (profile defaults to `fmapi-claudecode-profile`). Any missing flags will use sensible defaults.
 
 ## Other Commands
 

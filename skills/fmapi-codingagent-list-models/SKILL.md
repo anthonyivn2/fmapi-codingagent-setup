@@ -26,7 +26,6 @@ bash "<install-path>/setup-fmapi-claudecode.sh" --list-models
 
 4. The table uses visual markers:
    - **`>` (green)** — Currently configured model (in your settings)
-   - **`*` (cyan)** — Claude/Anthropic endpoint (relevant for FMAPI)
 
 5. If the command fails:
    - **No config found**: suggest `/fmapi-codingagent-setup` first
