@@ -43,8 +43,10 @@ bash "<install-path>/setup-fmapi-claudecode.sh" \
 | `--haiku MODEL` | Haiku model | `--haiku databricks-claude-haiku-4-5` |
 | `--ttl MINUTES` | Token refresh interval in minutes (default: `30`, max: `60`) | `--ttl 45` |
 | `--settings-location PATH` | Where to write settings (`home`, `cwd`, or a custom path) | `--settings-location home` |
+| `--config PATH` | Load configuration from a local JSON file | `--config ./my-config.json` |
+| `--config-url URL` | Load configuration from a remote JSON URL (HTTPS only) | `--config-url https://example.com/cfg.json` |
 
-When `--host` is provided, the script runs non-interactively. Other flags auto-default if omitted (profile defaults to `fmapi-claudecode-profile`). Any missing flags will use sensible defaults.
+When `--host`, `--config`, or `--config-url` is provided, the script runs non-interactively. Other flags auto-default if omitted (profile defaults to `fmapi-claudecode-profile`). CLI flags override config file values. `--config` and `--config-url` are mutually exclusive.
 
 ## Other Commands
 

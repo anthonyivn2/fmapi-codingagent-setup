@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "host": "https://my-workspace.cloud.databricks.com",
+  "profile": "fmapi-claudecode-profile",
+  "model": "databricks-claude-opus-4-6",
+  "opus": "databricks-claude-opus-4-6",
+  "sonnet": "databricks-claude-sonnet-4-6",
+  "haiku": "databricks-claude-haiku-4-5",
+  "ttl": 30,
+  "settings_location": "home"
+}

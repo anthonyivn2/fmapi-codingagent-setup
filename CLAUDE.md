@@ -8,6 +8,7 @@ This repo contains setup scripts and a Claude Code plugin that configure coding 
 
 ```
 setup-fmapi-claudecode.sh                          # Claude Code setup script (bash)
+example-config.json                                # Example config file for --config / --config-url
 .claude-plugin/plugin.json                         # Claude Code plugin manifest
 skills/fmapi-codingagent-status/SKILL.md           # /fmapi-codingagent-status skill
 skills/fmapi-codingagent-reauth/SKILL.md           # /fmapi-codingagent-reauth skill
@@ -45,7 +46,8 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 
 ## Key Concepts
 
-- **`setup-fmapi-claudecode.sh`** — Bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and generates `fmapi-key-helper.sh`. Supports `--status`, `--reauth`, `--doctor`, `--list-models`, `--validate-models`, `--uninstall`, and CLI flags for non-interactive setup. Passing `--host` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
+- **`setup-fmapi-claudecode.sh`** — Bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and generates `fmapi-key-helper.sh`. Supports `--status`, `--reauth`, `--doctor`, `--list-models`, `--validate-models`, `--uninstall`, `--config`, `--config-url`, and CLI flags for non-interactive setup. Passing `--host`, `--config`, or `--config-url` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
+- **`example-config.json`** — Example JSON config file showing all supported keys. Used with `--config` or hosted remotely for `--config-url` to enable reproducible, shareable team setups. Priority chain: CLI flags > config file > existing settings > hardcoded defaults.
 - **`.claude-plugin/plugin.json`** — Plugin manifest that registers the repo as a Claude Code plugin with the `skills/` directory.
 - **`skills/*/SKILL.md`** — Skill definitions that instruct Claude how to invoke the setup script with the appropriate flags.
 - **`fmapi-key-helper.sh`** — A POSIX `/bin/sh` script generated alongside `settings.json` that Claude Code invokes automatically via the `apiKeyHelper` setting to obtain OAuth access tokens on demand. The Databricks CLI handles token refresh transparently.
@@ -70,6 +72,8 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 | `--haiku MODEL` | Haiku model (default: `databricks-claude-haiku-4-5`) |
 | `--ttl MINUTES` | Token refresh interval in minutes (default: `30`, max: `60`) |
 | `--settings-location PATH` | Settings location: `home`, `cwd`, or custom path (default: `home`) |
+| `--config PATH` | Load configuration from a local JSON file |
+| `--config-url URL` | Load configuration from a remote JSON URL (HTTPS only) |
 
 ## Development Guidelines
 
@@ -102,6 +106,12 @@ There are no automated tests. To verify changes:
 13. Run `bash setup-fmapi-claudecode.sh --validate-models` — confirm per-model validation output.
 14. Run `--doctor`, `--list-models`, `--validate-models` with no prior config — should error gracefully.
 15. Run `bash setup-fmapi-claudecode.sh --uninstall` and confirm cleanup (including plugin deregistration).
+16. Run `bash setup-fmapi-claudecode.sh --config example-config.json` — confirm non-interactive setup from config file.
+17. Run `bash setup-fmapi-claudecode.sh --config nonexistent.json` — confirm "file not found" error.
+18. Create an invalid JSON file and run `--config` against it — confirm "not valid JSON" error.
+19. Create a config with an unknown key and run `--config` — confirm rejected with key listed.
+20. Run `bash setup-fmapi-claudecode.sh --config example-config.json --model override-model` — confirm CLI overrides config.
+21. Run `bash setup-fmapi-claudecode.sh --config x --config-url y` — confirm mutual exclusion error.
 
 ## Abbreviations
 

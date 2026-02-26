@@ -58,6 +58,49 @@ bash setup-fmapi-claudecode.sh \
 
 You can override any default with additional flags. See [CLI Reference](#cli-reference) for all available flags.
 
+### Config File Setup
+
+Load configuration from a JSON file instead of passing individual CLI flags. This is useful for teams who want to standardize setup across users.
+
+```bash
+# From a local config file
+bash setup-fmapi-claudecode.sh --config ./my-config.json
+
+# From a remote URL (HTTPS only)
+bash setup-fmapi-claudecode.sh --config-url https://example.com/fmapi-config.json
+
+# Config file with CLI overrides (CLI flags take priority)
+bash setup-fmapi-claudecode.sh --config ./my-config.json --model databricks-claude-sonnet-4-6
+```
+
+Both `--config` and `--config-url` enable non-interactive mode. See [`example-config.json`](example-config.json) for a complete example.
+
+#### Config file format
+
+JSON with the following keys (all optional except `host`):
+
+| Key | Type | Description |
+|---|---|---|
+| `version` | integer | Config format version (must be `1`) |
+| `host` | string | Databricks workspace URL (must start with `https://`) |
+| `profile` | string | Databricks CLI profile name |
+| `model` | string | Primary model |
+| `opus` | string | Opus model |
+| `sonnet` | string | Sonnet model |
+| `haiku` | string | Haiku model |
+| `ttl` | integer | Token refresh interval in minutes (1&ndash;60) |
+| `settings_location` | string | Where to write settings: `home`, `cwd`, or a custom path |
+
+#### Priority chain
+
+When both CLI flags and a config file are provided, the priority order is:
+
+```
+CLI flags > config file > existing settings.json > hardcoded defaults
+```
+
+If the config file is missing `host` and no `--host` CLI flag is provided, the script errors out (consistent with automation expectations).
+
 ### Plugin Skills
 
 The setup script automatically registers this repo as a Claude Code plugin, making the following slash commands available inside Claude Code:
@@ -164,6 +207,10 @@ Setup options (skip interactive prompts):
   --ttl MINUTES         Token refresh interval in minutes (default: 30, max: 60)
   --settings-location PATH
                         Where to write settings: "home", "cwd", or a custom path
+
+Config file options:
+  --config PATH         Load configuration from a local JSON file
+  --config-url URL      Load configuration from a remote JSON URL (HTTPS only)
 ```
 
 ### What the Script Does
