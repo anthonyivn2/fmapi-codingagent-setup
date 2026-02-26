@@ -191,6 +191,108 @@ discover_config() {
   done
 }
 
+# ── Config file loading ──────────────────────────────────────────────────────
+
+# Valid keys in config files (version is handled separately)
+_CONFIG_VALID_KEYS=("host" "profile" "model" "opus" "sonnet" "haiku" "ttl" "settings_location")
+
+# Load and validate a local JSON config file.
+# Populates FILE_* variables for use in gather_config priority chain.
+# Usage: load_config_file /path/to/config.json
+load_config_file() {
+  local path="$1"
+
+  # File must exist and be readable
+  [[ -f "$path" ]] || { error "Config file not found: $path"; exit 1; }
+  [[ -r "$path" ]] || { error "Config file is not readable: $path"; exit 1; }
+
+  # Validate JSON
+  jq empty "$path" 2>/dev/null || { error "Config file is not valid JSON: $path"; exit 1; }
+
+  # Validate version (if present, must be 1)
+  local version=""
+  version=$(jq -r '.version // empty' "$path") || true
+  if [[ -n "$version" ]] && [[ "$version" != "1" ]]; then
+    error "Unsupported config file version: $version (expected: 1)."
+    exit 1
+  fi
+
+  # Reject unknown keys
+  local unknown=""
+  unknown=$(jq -r 'keys[] | select(. != "version" and . != "host" and . != "profile" and . != "model" and . != "opus" and . != "sonnet" and . != "haiku" and . != "ttl" and . != "settings_location")' "$path") || true
+  if [[ -n "$unknown" ]]; then
+    local unknown_list=""
+    unknown_list=$(echo "$unknown" | paste -sd ',' - | sed 's/,/, /g')
+    local valid_list=""
+    valid_list=$(printf '%s' "version, "; printf '%s, ' "${_CONFIG_VALID_KEYS[@]}" | sed 's/, $//')
+    error "Unknown keys in config file: $unknown_list. Valid keys: $valid_list"
+    exit 1
+  fi
+
+  # Read values
+  FILE_HOST=$(jq -r '.host // empty' "$path") || true
+  FILE_PROFILE=$(jq -r '.profile // empty' "$path") || true
+  FILE_MODEL=$(jq -r '.model // empty' "$path") || true
+  FILE_OPUS=$(jq -r '.opus // empty' "$path") || true
+  FILE_SONNET=$(jq -r '.sonnet // empty' "$path") || true
+  FILE_HAIKU=$(jq -r '.haiku // empty' "$path") || true
+  FILE_SETTINGS_LOCATION=$(jq -r '.settings_location // empty' "$path") || true
+
+  local raw_ttl=""
+  raw_ttl=$(jq -r '.ttl // empty' "$path") || true
+  if [[ -n "$raw_ttl" ]]; then
+    if ! [[ "$raw_ttl" =~ ^[0-9]+$ ]] || [[ "$raw_ttl" -le 0 ]]; then
+      error "Config file: ttl must be a positive integer (minutes). Got: $raw_ttl"
+      exit 1
+    fi
+    if [[ "$raw_ttl" -gt 60 ]]; then
+      error "Config file: ttl cannot exceed 60 minutes. Got: $raw_ttl"
+      exit 1
+    fi
+    FILE_TTL="$raw_ttl"
+  fi
+
+  # Validate host format (if present)
+  if [[ -n "$FILE_HOST" ]] && [[ "$FILE_HOST" != https://* ]]; then
+    error "Config file: host must start with https://. Got: $FILE_HOST"
+    exit 1
+  fi
+
+  # Validate profile format (if present)
+  if [[ -n "$FILE_PROFILE" ]] && ! [[ "$FILE_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    error "Config file: invalid profile name '$FILE_PROFILE'. Use letters, numbers, hyphens, and underscores."
+    exit 1
+  fi
+}
+
+# Fetch a remote JSON config and delegate to load_config_file.
+# Usage: load_config_url https://example.com/config.json
+load_config_url() {
+  local url="$1"
+
+  # Enforce HTTPS
+  [[ "$url" == https://* ]] || { error "Config URL must use HTTPS."; exit 1; }
+
+  # Download to temp file
+  local tmp_config=""
+  tmp_config=$(mktemp "${TMPDIR:-/tmp}/fmapi-config-XXXXXX.json")
+  _CLEANUP_FILES+=("$tmp_config")
+
+  local http_code=""
+  http_code=$(curl -fsSL -w '%{http_code}' -o "$tmp_config" "$url" 2>/dev/null) || {
+    error "Failed to fetch config from URL: $url"
+    exit 1
+  }
+
+  # Check for non-2xx (curl -f should catch most, but be safe)
+  if [[ -z "$http_code" ]] || [[ "${http_code:0:1}" != "2" ]]; then
+    error "Failed to fetch config from URL: $url (HTTP $http_code)"
+    exit 1
+  fi
+
+  load_config_file "$tmp_config"
+}
+
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 # Get an OAuth token for the given profile (or $CFG_PROFILE).
@@ -841,6 +943,7 @@ Commands:
   --doctor              Run comprehensive diagnostics (deps, config, auth, connectivity, models)
   --list-models         List all serving endpoints in the workspace
   --validate-models     Validate configured models exist and are ready
+  --reinstall           Rerun setup using previously saved configuration
   --uninstall           Remove FMAPI helper scripts and settings
   -h, --help            Show this help message
 
@@ -854,6 +957,10 @@ Setup options (skip interactive prompts):
   --ttl MINUTES         Token refresh interval in minutes (default: 30, max: 60)
   --settings-location   Where to write settings: "home", "cwd", or path (default: home)
 
+Config file options:
+  --config PATH         Load configuration from a local JSON file
+  --config-url URL      Load configuration from a remote JSON URL (HTTPS only)
+
 Examples:
   # Interactive setup — prompts for everything
   bash setup-fmapi-claudecode.sh
@@ -864,6 +971,15 @@ Examples:
   # Non-interactive with custom profile and model
   bash setup-fmapi-claudecode.sh --host https://my-workspace.cloud.databricks.com \
     --profile my-profile --model databricks-claude-sonnet-4-6
+
+  # Setup from a config file
+  bash setup-fmapi-claudecode.sh --config ./my-config.json
+
+  # Setup from a remote config URL
+  bash setup-fmapi-claudecode.sh --config-url https://example.com/fmapi-config.json
+
+  # Config file with CLI overrides
+  bash setup-fmapi-claudecode.sh --config ./my-config.json --model databricks-claude-sonnet-4-6
 
   # Check configuration health
   bash setup-fmapi-claudecode.sh --status
@@ -880,11 +996,15 @@ Examples:
   # Validate configured models
   bash setup-fmapi-claudecode.sh --validate-models
 
+  # Rerun setup with previous config (no prompts)
+  bash setup-fmapi-claudecode.sh --reinstall
+
   # Uninstall all FMAPI artifacts
   bash setup-fmapi-claudecode.sh --uninstall
 
 Troubleshooting:
   OAuth expired        Run: bash setup-fmapi-claudecode.sh --reauth
+  ConnectionRefused    Run: bash setup-fmapi-claudecode.sh --reinstall
   "No config found"    Run setup first (without --status/--reauth)
   Wrong workspace URL  URL must start with https:// and have no trailing slash
   Permission denied    Helper script needs execute permission (chmod 700)
@@ -908,17 +1028,17 @@ gather_config() {
     discover_config
   fi
 
-  # Resolve defaults: CLI flag > discovered config > hardcoded default
-  _default() { echo "${1:-${2:-${3:-}}}"; }
+  # Resolve defaults: CLI flag > config file > discovered config > hardcoded default
+  _default() { echo "${1:-${2:-${3:-${4:-}}}}"; }
 
   local default_host default_profile default_model default_opus default_sonnet default_haiku default_ttl
-  default_host=$(_default "$CLI_HOST" "$CFG_HOST")
-  default_profile=$(_default "$CLI_PROFILE" "$CFG_PROFILE" "fmapi-claudecode-profile")
-  default_model=$(_default "$CLI_MODEL" "$CFG_MODEL" "databricks-claude-opus-4-6")
-  default_opus=$(_default "$CLI_OPUS" "$CFG_OPUS" "databricks-claude-opus-4-6")
-  default_sonnet=$(_default "$CLI_SONNET" "$CFG_SONNET" "databricks-claude-sonnet-4-6")
-  default_haiku=$(_default "$CLI_HAIKU" "$CFG_HAIKU" "databricks-claude-haiku-4-5")
-  default_ttl=$(_default "$CLI_TTL" "$CFG_TTL" "30")
+  default_host=$(_default "$CLI_HOST" "$FILE_HOST" "$CFG_HOST" "")
+  default_profile=$(_default "$CLI_PROFILE" "$FILE_PROFILE" "$CFG_PROFILE" "fmapi-claudecode-profile")
+  default_model=$(_default "$CLI_MODEL" "$FILE_MODEL" "$CFG_MODEL" "databricks-claude-opus-4-6")
+  default_opus=$(_default "$CLI_OPUS" "$FILE_OPUS" "$CFG_OPUS" "databricks-claude-opus-4-6")
+  default_sonnet=$(_default "$CLI_SONNET" "$FILE_SONNET" "$CFG_SONNET" "databricks-claude-sonnet-4-6")
+  default_haiku=$(_default "$CLI_HAIKU" "$FILE_HAIKU" "$CFG_HAIKU" "databricks-claude-haiku-4-5")
+  default_ttl=$(_default "$CLI_TTL" "$FILE_TTL" "$CFG_TTL" "30")
 
   # ── Workspace URL ─────────────────────────────────────────────────────────
   prompt_value DATABRICKS_HOST "Databricks workspace URL" "$CLI_HOST" "$default_host"
@@ -950,14 +1070,15 @@ gather_config() {
   FMAPI_TTL_MS=$(( FMAPI_TTL_MINUTES * 60000 ))
 
   # ── Settings location ────────────────────────────────────────────────────
-  if [[ -n "$CLI_SETTINGS_LOCATION" ]]; then
-    case "$CLI_SETTINGS_LOCATION" in
+  local resolved_settings_location="${CLI_SETTINGS_LOCATION:-$FILE_SETTINGS_LOCATION}"
+  if [[ -n "$resolved_settings_location" ]]; then
+    case "$resolved_settings_location" in
       home) SETTINGS_BASE="$HOME" ;;
       cwd)  SETTINGS_BASE="$(cd "$(pwd)" && pwd)" ;;
       *)
-        CLI_SETTINGS_LOCATION="${CLI_SETTINGS_LOCATION/#\~/$HOME}"
-        mkdir -p "$CLI_SETTINGS_LOCATION"
-        SETTINGS_BASE="$(cd "$CLI_SETTINGS_LOCATION" && pwd)"
+        resolved_settings_location="${resolved_settings_location/#\~/$HOME}"
+        mkdir -p "$resolved_settings_location"
+        SETTINGS_BASE="$(cd "$resolved_settings_location" && pwd)"
         ;;
     esac
   elif [[ "$NON_INTERACTIVE" == true ]]; then
@@ -1165,15 +1286,26 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # Get OAuth access token (databricks CLI auto-refreshes using refresh token)
-token=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
-  | jq -r '.access_token // empty') || true
+_fetch_token() {
+  databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
+    | jq -r '.access_token // empty'
+}
+
+token=$(_fetch_token) || true
+
+# Retry once after a short delay for transient failures (network blip, CLI lock)
+if [ -z "$token" ]; then
+  echo "FMAPI: Token fetch failed for profile '$FMAPI_PROFILE', retrying ..." >&2
+  sleep 2
+  token=$(_fetch_token) || true
+fi
 
 if [ -n "$token" ]; then
   echo "$token"
   exit 0
 fi
 
-# Refresh token expired — attempt browser-based re-authentication
+# Refresh token likely expired — attempt browser-based re-authentication
 if [ -e /dev/tty ]; then
   _out="/dev/tty"
 else
@@ -1189,8 +1321,7 @@ if command -v timeout >/dev/null 2>&1; then
 fi
 
 if eval "$_reauth_cmd" > "$_out" 2>&1; then
-  token=$(databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
-    | jq -r '.access_token // empty') || true
+  token=$(_fetch_token) || true
   if [ -n "$token" ]; then
     echo "FMAPI: Re-authentication successful." > "$_out"
     echo "$token"
@@ -1198,13 +1329,18 @@ if eval "$_reauth_cmd" > "$_out" 2>&1; then
   fi
 fi
 
-echo "FMAPI: Re-authentication failed. Run manually: databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" > "$_out"
+echo "FMAPI: Re-authentication failed. Run one of the following:" >&2
+echo "FMAPI:   bash __SETUP_SCRIPT__ --reauth" >&2
+echo "FMAPI:   databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" >&2
 exit 1
 HELPER_SCRIPT
 
+  local setup_script
+  setup_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
   helper_tmp=$(mktemp "${HELPER_FILE}.XXXXXX")
   _CLEANUP_FILES+=("$helper_tmp")
-  sed "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g" "$HELPER_FILE" > "$helper_tmp"
+  sed "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g; s|__SETUP_SCRIPT__|${setup_script}|g" "$HELPER_FILE" > "$helper_tmp"
   mv "$helper_tmp" "$HELPER_FILE"
   chmod 700 "$HELPER_FILE"
   success "Helper script written to ${HELPER_FILE}."
@@ -1334,6 +1470,7 @@ do_setup() {
 CLI_HOST="" CLI_PROFILE="" CLI_MODEL="" CLI_OPUS="" CLI_SONNET="" CLI_HAIKU=""
 CLI_TTL=""
 CLI_SETTINGS_LOCATION=""
+CLI_CONFIG_FILE="" CLI_CONFIG_URL=""
 ACTION=""
 
 while [[ $# -gt 0 ]]; do
@@ -1345,6 +1482,7 @@ while [[ $# -gt 0 ]]; do
     --doctor)       ACTION="doctor"; shift ;;
     --list-models)  ACTION="list-models"; shift ;;
     --validate-models) ACTION="validate-models"; shift ;;
+    --reinstall)    ACTION="reinstall"; shift ;;
     --host)         CLI_HOST="${2:-}"; [[ -z "$CLI_HOST" ]] && { error "--host requires a URL."; exit 1; }; shift 2 ;;
     --profile)      CLI_PROFILE="${2:-}"; [[ -z "$CLI_PROFILE" ]] && { error "--profile requires a name."; exit 1; }; shift 2 ;;
     --model)        CLI_MODEL="${2:-}"; [[ -z "$CLI_MODEL" ]] && { error "--model requires a value."; exit 1; }; shift 2 ;;
@@ -1353,13 +1491,47 @@ while [[ $# -gt 0 ]]; do
     --haiku)        CLI_HAIKU="${2:-}"; [[ -z "$CLI_HAIKU" ]] && { error "--haiku requires a value."; exit 1; }; shift 2 ;;
     --ttl)          CLI_TTL="${2:-}"; [[ -z "$CLI_TTL" ]] && { error "--ttl requires a value."; exit 1; }; shift 2 ;;
     --settings-location) CLI_SETTINGS_LOCATION="${2:-}"; [[ -z "$CLI_SETTINGS_LOCATION" ]] && { error "--settings-location requires a value."; exit 1; }; shift 2 ;;
+    --config)       CLI_CONFIG_FILE="${2:-}"; [[ -z "$CLI_CONFIG_FILE" ]] && { error "--config requires a file path."; exit 1; }; shift 2 ;;
+    --config-url)   CLI_CONFIG_URL="${2:-}"; [[ -z "$CLI_CONFIG_URL" ]] && { error "--config-url requires a URL."; exit 1; }; shift 2 ;;
     *)              error "Unknown option: $1"; echo "  Run with --help for usage." >&2; exit 1 ;;
   esac
 done
 
+# ── Mutual exclusion: --config and --config-url ──────────────────────────────
+if [[ -n "$CLI_CONFIG_FILE" ]] && [[ -n "$CLI_CONFIG_URL" ]]; then
+  error "Cannot use both --config and --config-url. Choose one."
+  exit 1
+fi
+
+# ── Config file loading ──────────────────────────────────────────────────────
+FILE_HOST="" FILE_PROFILE="" FILE_MODEL="" FILE_OPUS="" FILE_SONNET="" FILE_HAIKU=""
+FILE_TTL="" FILE_SETTINGS_LOCATION=""
+
+if [[ -n "$CLI_CONFIG_FILE" ]] || [[ -n "$CLI_CONFIG_URL" ]]; then
+  require_cmd jq "jq is required to parse config files. Install with: $(_jq_install_hint)"
+  if [[ -n "$CLI_CONFIG_FILE" ]]; then
+    load_config_file "$CLI_CONFIG_FILE"
+  else
+    load_config_url "$CLI_CONFIG_URL"
+  fi
+fi
+
 # ── Non-interactive mode ──────────────────────────────────────────────────────
 NON_INTERACTIVE=false
 [[ -n "$CLI_HOST" ]] && NON_INTERACTIVE=true
+[[ -n "$CLI_CONFIG_FILE" || -n "$CLI_CONFIG_URL" ]] && NON_INTERACTIVE=true
+
+# ── --reinstall: rerun setup with previous config ─────────────────────────────
+if [[ "${ACTION}" == "reinstall" ]]; then
+  require_cmd jq "jq is required for reinstall. Install with: $(_jq_install_hint)"
+  discover_config
+  if [[ "$CFG_FOUND" != true ]] || [[ -z "$CFG_HOST" ]]; then
+    error "No existing FMAPI configuration found. Run setup first (without --reinstall)."
+    exit 1
+  fi
+  info "Re-installing with existing config (${CFG_HOST}, profile: ${CFG_PROFILE:-fmapi-claudecode-profile})"
+  NON_INTERACTIVE=true
+fi
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 case "${ACTION}" in
