@@ -62,6 +62,7 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 | `--doctor` | Run comprehensive diagnostics (deps, config, profile, auth, connectivity, models) |
 | `--list-models` | List all serving endpoints in the workspace |
 | `--validate-models` | Validate configured models exist and are ready |
+| `--reinstall` | Rerun setup using previously saved configuration |
 | `--uninstall` | Remove all FMAPI artifacts and plugin registration |
 | `-h`, `--help` | Show help |
 | `--host URL` | Databricks workspace URL (enables non-interactive mode) |
