@@ -75,6 +75,10 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 | `--settings-location PATH` | Settings location: `home`, `cwd`, or custom path (default: `home`) |
 | `--config PATH` | Load configuration from a local JSON file |
 | `--config-url URL` | Load configuration from a remote JSON URL (HTTPS only) |
+| `--verbose` | Show debug-level output |
+| `--quiet`, `-q` | Suppress informational output (errors always shown) |
+| `--no-color` | Disable colored output (also respects `NO_COLOR` env var) |
+| `--dry-run` | Show what would happen without making changes |
 
 ## Development Guidelines
 
@@ -113,6 +117,15 @@ There are no automated tests. To verify changes:
 19. Create a config with an unknown key and run `--config` — confirm rejected with key listed.
 20. Run `bash setup-fmapi-claudecode.sh --config example-config.json --model override-model` — confirm CLI overrides config.
 21. Run `bash setup-fmapi-claudecode.sh --config x --config-url y` — confirm mutual exclusion error.
+22. Run `bash setup-fmapi-claudecode.sh --status | cat` — verify no ANSI escape codes in output.
+23. Run `NO_COLOR=1 bash setup-fmapi-claudecode.sh --status` — verify no colors.
+24. Run `bash setup-fmapi-claudecode.sh --no-color --status` — verify no colors.
+25. Run `bash setup-fmapi-claudecode.sh --quiet --status` — verify minimal output (errors only).
+26. Run `bash setup-fmapi-claudecode.sh --verbose --status` — verify debug lines appear.
+27. Run `bash setup-fmapi-claudecode.sh --dry-run --host https://example.com` — verify plan printed, no files changed.
+28. Run `bash setup-fmapi-claudecode.sh --dry-run --status` — verify error about incompatible flags.
+29. Run `SSH_CONNECTION=x bash setup-fmapi-claudecode.sh --doctor` — verify headless info line in Auth section.
+30. Run `bash setup-fmapi-claudecode.sh --dry-run` (no --host) — verify error about missing host (non-interactive mode).
 
 ## Abbreviations
 

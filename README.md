@@ -186,6 +186,12 @@ Setup options (skip interactive prompts):
 Config file options:
   --config PATH         Load configuration from a local JSON file
   --config-url URL      Load configuration from a remote JSON URL (HTTPS only)
+
+Output options:
+  --verbose             Show debug-level output
+  --quiet, -q           Suppress informational output (errors always shown)
+  --no-color            Disable colored output (also respects NO_COLOR env var)
+  --dry-run             Show what would happen without making changes
 ```
 
 ## How It Works

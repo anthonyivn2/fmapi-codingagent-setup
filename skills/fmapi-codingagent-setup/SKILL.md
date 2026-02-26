@@ -45,8 +45,12 @@ bash "<install-path>/setup-fmapi-claudecode.sh" \
 | `--settings-location PATH` | Where to write settings (`home`, `cwd`, or a custom path) | `--settings-location home` |
 | `--config PATH` | Load configuration from a local JSON file | `--config ./my-config.json` |
 | `--config-url URL` | Load configuration from a remote JSON URL (HTTPS only) | `--config-url https://example.com/cfg.json` |
+| `--verbose` | Show debug-level output | `--verbose` |
+| `--quiet` / `-q` | Suppress informational output (errors always shown) | `--quiet` |
+| `--no-color` | Disable colored output | `--no-color` |
+| `--dry-run` | Show what would happen without making changes | `--dry-run --host https://...` |
 
-When `--host`, `--config`, or `--config-url` is provided, the script runs non-interactively. Other flags auto-default if omitted (profile defaults to `fmapi-claudecode-profile`). CLI flags override config file values. `--config` and `--config-url` are mutually exclusive.
+When `--host`, `--config`, or `--config-url` is provided, the script runs non-interactively. Other flags auto-default if omitted (profile defaults to `fmapi-claudecode-profile`). CLI flags override config file values. `--config` and `--config-url` are mutually exclusive. `--dry-run` implies non-interactive mode.
 
 ## Other Commands
 

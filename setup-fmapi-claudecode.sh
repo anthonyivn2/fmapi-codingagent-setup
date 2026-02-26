@@ -15,11 +15,20 @@ trap _cleanup EXIT
 BOLD='\033[1m' DIM='\033[2m' RED='\033[31m' GREEN='\033[32m'
 YELLOW='\033[33m' CYAN='\033[36m' RESET='\033[0m'
 
+# Respect NO_COLOR (https://no-color.org) and non-TTY output
+if [[ ! -t 1 ]] || [[ -n "${NO_COLOR:-}" ]]; then
+  BOLD='' DIM='' RED='' GREEN='' YELLOW='' CYAN='' RESET=''
+fi
+
 _OS_TYPE="$(uname -s 2>/dev/null || echo 'Unknown')"
 
-info()    { echo -e "  ${CYAN}::${RESET} $1"; }
-success() { echo -e "  ${GREEN}${BOLD}ok${RESET} $1"; }
+VERBOSITY=1  # 0=quiet, 1=normal, 2=verbose
+DRY_RUN=false
+
+info()    { [[ "$VERBOSITY" -ge 1 ]] && echo -e "  ${CYAN}::${RESET} $1" || true; }
+success() { [[ "$VERBOSITY" -ge 1 ]] && echo -e "  ${GREEN}${BOLD}ok${RESET} $1" || true; }
 error()   { echo -e "\n  ${RED}${BOLD}!! ERROR${RESET}${RED} $1${RESET}\n" >&2; }
+debug()   { [[ "$VERBOSITY" -ge 2 ]] && echo -e "  ${DIM}[debug]${RESET} $1" || true; }
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -448,6 +457,9 @@ do_reauth() {
   [[ -z "$CFG_PROFILE" ]] && { error "Could not determine profile from helper script."; exit 1; }
   [[ -z "$CFG_HOST" ]] && { error "Could not determine host from helper script."; exit 1; }
 
+  if [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_TTY:-}" ]] && [[ -z "${DISPLAY:-}" ]]; then
+    echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Headless SSH session detected. Browser-based OAuth may not work."
+  fi
   info "Re-authenticating with Databricks (profile: ${CFG_PROFILE}) ..."
   databricks auth login --host "$CFG_HOST" --profile "$CFG_PROFILE"
 
@@ -867,6 +879,9 @@ do_doctor() {
       echo -e "  ${RED}${BOLD}FAIL${RESET}  OAuth token expired or invalid  ${DIM}Fix: --reauth${RESET}"
       any_fail=true
     fi
+    if [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_TTY:-}" ]] && [[ -z "${DISPLAY:-}" ]]; then
+      echo -e "  ${YELLOW}${BOLD}INFO${RESET}  Headless SSH session detected — browser-based OAuth will not work here"
+    fi
   fi
   echo ""
 
@@ -961,6 +976,12 @@ Config file options:
   --config PATH         Load configuration from a local JSON file
   --config-url URL      Load configuration from a remote JSON URL (HTTPS only)
 
+Output options:
+  --verbose             Show debug-level output
+  --quiet, -q           Suppress informational output (errors always shown)
+  --no-color            Disable colored output (also respects NO_COLOR env var)
+  --dry-run             Show what would happen without making changes
+
 Examples:
   # Interactive setup — prompts for everything
   bash setup-fmapi-claudecode.sh
@@ -999,6 +1020,18 @@ Examples:
   # Rerun setup with previous config (no prompts)
   bash setup-fmapi-claudecode.sh --reinstall
 
+  # Preview what setup would do (no changes made)
+  bash setup-fmapi-claudecode.sh --dry-run --host https://my-workspace.cloud.databricks.com
+
+  # Verbose output for debugging
+  bash setup-fmapi-claudecode.sh --verbose --status
+
+  # Quiet mode for CI (errors only)
+  bash setup-fmapi-claudecode.sh --quiet --host https://my-workspace.cloud.databricks.com
+
+  # Pipe-friendly (no ANSI codes)
+  bash setup-fmapi-claudecode.sh --no-color --status
+
   # Uninstall all FMAPI artifacts
   bash setup-fmapi-claudecode.sh --uninstall
 
@@ -1027,6 +1060,8 @@ gather_config() {
   if command -v jq &>/dev/null; then
     discover_config
   fi
+
+  debug "discover_config: CFG_FOUND=${CFG_FOUND} CFG_HOST=${CFG_HOST} CFG_PROFILE=${CFG_PROFILE}"
 
   # Resolve defaults: CLI flag > config file > discovered config > hardcoded default
   _default() { echo "${1:-${2:-${3:-${4:-}}}}"; }
@@ -1109,10 +1144,13 @@ gather_config() {
 
   SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
   HELPER_FILE="${SETTINGS_BASE}/.claude/fmapi-key-helper.sh"
+
+  debug "gather_config: host=${DATABRICKS_HOST} profile=${DATABRICKS_PROFILE} model=${ANTHROPIC_MODEL}"
+  debug "gather_config: settings=${SETTINGS_FILE} helper=${HELPER_FILE}"
 }
 
 install_dependencies() {
-  echo -e "\n${BOLD}Installing dependencies${RESET}"
+  [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}Installing dependencies${RESET}"
 
   case "$_OS_TYPE" in
     Darwin)
@@ -1188,7 +1226,7 @@ install_dependencies() {
 }
 
 authenticate() {
-  echo -e "\n${BOLD}Authenticating${RESET}"
+  [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}Authenticating${RESET}"
 
   get_oauth_token() {
     databricks auth token --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
@@ -1196,7 +1234,11 @@ authenticate() {
   }
 
   OAUTH_TOKEN=$(get_oauth_token) || true
+  debug "authenticate: existing token=${OAUTH_TOKEN:+present}${OAUTH_TOKEN:-missing}"
   if [[ -z "$OAUTH_TOKEN" ]]; then
+    if [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_TTY:-}" ]] && [[ -z "${DISPLAY:-}" ]]; then
+      echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Headless SSH session detected. Browser-based OAuth may not work."
+    fi
     info "Logging in to ${DATABRICKS_HOST} ..."
     databricks auth login --host "$DATABRICKS_HOST" --profile "$DATABRICKS_PROFILE"
     OAUTH_TOKEN=$(get_oauth_token)
@@ -1225,7 +1267,7 @@ authenticate() {
 }
 
 write_settings() {
-  echo -e "\n${BOLD}Writing settings${RESET}"
+  [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}Writing settings${RESET}"
 
   mkdir -p "$(dirname "$SETTINGS_FILE")"
 
@@ -1262,11 +1304,12 @@ write_settings() {
       '{"apiKeyHelper": $helper, "env": $env}' > "$SETTINGS_FILE"
     chmod 600 "$SETTINGS_FILE"
   fi
+  debug "write_settings: wrote ${SETTINGS_FILE} (TTL=${FMAPI_TTL_MS}ms)"
   success "Settings written to ${SETTINGS_FILE}."
 }
 
 write_helper() {
-  echo -e "\n${BOLD}API key helper${RESET}"
+  [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}API key helper${RESET}"
 
   cat > "$HELPER_FILE" << 'HELPER_SCRIPT'
 #!/bin/sh
@@ -1305,7 +1348,22 @@ if [ -n "$token" ]; then
   exit 0
 fi
 
+# Detect headless environments (SSH without display forwarding)
+_is_headless() {
+  [ -n "${SSH_CONNECTION:-}" ] && [ -z "${DISPLAY:-}" ] && return 0
+  [ -n "${SSH_TTY:-}" ] && [ -z "${DISPLAY:-}" ] && return 0
+  [ ! -e /dev/tty ] && return 0
+  return 1
+}
+
 # Refresh token likely expired — attempt browser-based re-authentication
+if _is_headless; then
+  echo "FMAPI: OAuth session expired in a headless environment." >&2
+  echo "FMAPI: Re-authenticate from a machine with a browser:" >&2
+  echo "FMAPI:   databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" >&2
+  exit 1
+fi
+
 if [ -e /dev/tty ]; then
   _out="/dev/tty"
 else
@@ -1343,6 +1401,7 @@ HELPER_SCRIPT
   sed "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g; s|__SETUP_SCRIPT__|${setup_script}|g" "$HELPER_FILE" > "$helper_tmp"
   mv "$helper_tmp" "$HELPER_FILE"
   chmod 700 "$HELPER_FILE"
+  debug "write_helper: wrote ${HELPER_FILE} (profile=${DATABRICKS_PROFILE}, host=${DATABRICKS_HOST})"
   success "Helper script written to ${HELPER_FILE}."
 }
 
@@ -1376,7 +1435,7 @@ register_plugin() {
 }
 
 run_smoke_test() {
-  echo -e "\n${BOLD}Verifying setup${RESET}"
+  [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}Verifying setup${RESET}"
 
   local warnings=0
 
@@ -1441,6 +1500,7 @@ run_smoke_test() {
 }
 
 print_summary() {
+  [[ "$VERBOSITY" -lt 1 ]] && return 0
   echo -e "\n${GREEN}${BOLD}  Setup complete!${RESET}"
   echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${DATABRICKS_HOST}${RESET}"
   echo -e "  ${DIM}Profile${RESET}    ${BOLD}${DATABRICKS_PROFILE}${RESET}"
@@ -1454,9 +1514,82 @@ print_summary() {
   echo -e "\n  Run ${CYAN}${BOLD}claude${RESET} to start.\n"
 }
 
+print_dry_run_plan() {
+  echo -e "\n${BOLD}  Claude Code x Databricks FMAPI — Dry Run${RESET}\n"
+  echo -e "  The following actions ${BOLD}would${RESET} be performed:\n"
+
+  # Dependencies
+  echo -e "  ${BOLD}Dependencies${RESET}"
+  for dep_name in jq databricks claude; do
+    if command -v "$dep_name" &>/dev/null; then
+      echo -e "  ${GREEN}${BOLD}ok${RESET}  ${dep_name} already installed"
+    else
+      echo -e "  ${CYAN}::${RESET}  ${dep_name} would be installed"
+    fi
+  done
+  echo ""
+
+  # Authentication
+  echo -e "  ${BOLD}Authentication${RESET}"
+  echo -e "  ${CYAN}::${RESET}  OAuth login target: ${BOLD}${DATABRICKS_HOST}${RESET}"
+  echo -e "  ${CYAN}::${RESET}  CLI profile: ${BOLD}${DATABRICKS_PROFILE}${RESET}"
+  echo ""
+
+  # Settings
+  echo -e "  ${BOLD}Settings${RESET}"
+  echo -e "  ${CYAN}::${RESET}  Settings file: ${BOLD}${SETTINGS_FILE}${RESET}"
+  if [[ -f "$SETTINGS_FILE" ]]; then
+    echo -e "       ${DIM}(exists — FMAPI keys would be merged)${RESET}"
+  else
+    echo -e "       ${DIM}(would be created)${RESET}"
+  fi
+  echo -e "  ${CYAN}::${RESET}  Env vars that would be set:"
+  echo -e "       ANTHROPIC_MODEL=${BOLD}${ANTHROPIC_MODEL}${RESET}"
+  echo -e "       ANTHROPIC_BASE_URL=${BOLD}${DATABRICKS_HOST}/serving-endpoints/anthropic${RESET}"
+  echo -e "       ANTHROPIC_DEFAULT_OPUS_MODEL=${BOLD}${ANTHROPIC_OPUS_MODEL}${RESET}"
+  echo -e "       ANTHROPIC_DEFAULT_SONNET_MODEL=${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
+  echo -e "       ANTHROPIC_DEFAULT_HAIKU_MODEL=${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
+  echo -e "       CLAUDE_CODE_API_KEY_HELPER_TTL_MS=${BOLD}${FMAPI_TTL_MS}${RESET}"
+  echo ""
+
+  # Helper
+  echo -e "  ${BOLD}Helper script${RESET}"
+  echo -e "  ${CYAN}::${RESET}  Path: ${BOLD}${HELPER_FILE}${RESET}"
+  if [[ -f "$HELPER_FILE" ]]; then
+    echo -e "       ${DIM}(exists — would be overwritten)${RESET}"
+  else
+    echo -e "       ${DIM}(would be created)${RESET}"
+  fi
+  echo ""
+
+  # Plugin
+  echo -e "  ${BOLD}Plugin registration${RESET}"
+  local script_dir=""
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local plugins_file="$HOME/.claude/plugins/installed_plugins.json"
+  if [[ -f "$plugins_file" ]]; then
+    local existing_path=""
+    existing_path=$(jq -r '.["fmapi-codingagent"].installPath // empty' "$plugins_file" 2>/dev/null) || true
+    if [[ "$existing_path" == "$script_dir" ]]; then
+      echo -e "  ${GREEN}${BOLD}ok${RESET}  Already registered"
+    else
+      echo -e "  ${CYAN}::${RESET}  Would register plugin at ${BOLD}${script_dir}${RESET}"
+    fi
+  else
+    echo -e "  ${CYAN}::${RESET}  Would register plugin at ${BOLD}${script_dir}${RESET}"
+  fi
+  echo -e "\n  ${DIM}No changes were made. Remove --dry-run to run setup.${RESET}\n"
+}
+
 do_setup() {
   echo -e "\n${BOLD}  Claude Code x Databricks FMAPI Setup${RESET}\n"
   gather_config
+
+  if [[ "$DRY_RUN" == true ]]; then
+    print_dry_run_plan
+    exit 0
+  fi
+
   install_dependencies
   authenticate
   write_settings
@@ -1483,6 +1616,10 @@ while [[ $# -gt 0 ]]; do
     --list-models)  ACTION="list-models"; shift ;;
     --validate-models) ACTION="validate-models"; shift ;;
     --reinstall)    ACTION="reinstall"; shift ;;
+    --no-color)     BOLD='' DIM='' RED='' GREEN='' YELLOW='' CYAN='' RESET=''; shift ;;
+    --verbose)      VERBOSITY=2; shift ;;
+    --quiet|-q)     VERBOSITY=0; shift ;;
+    --dry-run)      DRY_RUN=true; shift ;;
     --host)         CLI_HOST="${2:-}"; [[ -z "$CLI_HOST" ]] && { error "--host requires a URL."; exit 1; }; shift 2 ;;
     --profile)      CLI_PROFILE="${2:-}"; [[ -z "$CLI_PROFILE" ]] && { error "--profile requires a name."; exit 1; }; shift 2 ;;
     --model)        CLI_MODEL="${2:-}"; [[ -z "$CLI_MODEL" ]] && { error "--model requires a value."; exit 1; }; shift 2 ;;
@@ -1503,6 +1640,12 @@ if [[ -n "$CLI_CONFIG_FILE" ]] && [[ -n "$CLI_CONFIG_URL" ]]; then
   exit 1
 fi
 
+# ── --dry-run validation ─────────────────────────────────────────────────────
+if [[ "$DRY_RUN" == true ]] && [[ -n "$ACTION" ]]; then
+  error "--dry-run cannot be combined with --${ACTION}. It only applies to setup."
+  exit 1
+fi
+
 # ── Config file loading ──────────────────────────────────────────────────────
 FILE_HOST="" FILE_PROFILE="" FILE_MODEL="" FILE_OPUS="" FILE_SONNET="" FILE_HAIKU=""
 FILE_TTL="" FILE_SETTINGS_LOCATION=""
@@ -1520,6 +1663,7 @@ fi
 NON_INTERACTIVE=false
 [[ -n "$CLI_HOST" ]] && NON_INTERACTIVE=true
 [[ -n "$CLI_CONFIG_FILE" || -n "$CLI_CONFIG_URL" ]] && NON_INTERACTIVE=true
+[[ "$DRY_RUN" == true ]] && NON_INTERACTIVE=true
 
 # ── --reinstall: rerun setup with previous config ─────────────────────────────
 if [[ "${ACTION}" == "reinstall" ]]; then
