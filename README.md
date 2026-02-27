@@ -287,22 +287,111 @@ Claude Code invokes the helper script every 5 minutes by default (configurable v
 
 ### Troubleshooting
 
-> **Not sure what's wrong?** Start with `bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --doctor`
+> **Not sure what's wrong?** Run `--doctor` first &mdash; it checks dependencies, config files, auth, connectivity, and models in one pass:
+> ```bash
+> bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --doctor
+> ```
 
-**"Workspace URL must start with https://"**
-Provide the full URL including the scheme, e.g. `https://my-workspace.cloud.databricks.com`.
+---
 
-**"apiKeyHelper failed" or authentication errors**
-Run the helper script manually to diagnose: `sh ~/.claude/fmapi-key-helper.sh`. If it prints an OAuth error, re-authenticate with `bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --reauth` or use `/fmapi-codingagent-reauth` inside Claude Code.
+#### "Workspace URL must start with https://"
 
-**Claude Code returns authentication errors**
-Your OAuth session may have expired. Run `bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --reauth` to refresh the session, then retry `claude`.
+The script requires the full URL with scheme. Use the format:
 
-**Model not found or wrong model name**
-Run `bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --list-models` to discover available serving endpoints, then re-run setup to pick the correct model IDs.
+```
+https://my-workspace.cloud.databricks.com
+```
 
-**Unclear issue**
-Run `bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --doctor` for a comprehensive diagnostic report covering dependencies, configuration, authentication, connectivity, and model validation.
+Do not include a trailing slash or path segments.
+
+---
+
+#### "apiKeyHelper failed" or token errors in Claude Code
+
+This means the helper script that supplies OAuth tokens is failing. To diagnose:
+
+1. Run the helper directly and check its output:
+   ```bash
+   sh ~/.claude/fmapi-key-helper.sh
+   ```
+2. If it prints an error about an expired or invalid token, re-authenticate:
+   ```bash
+   bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --reauth
+   ```
+   Or use `/fmapi-codingagent-reauth` inside Claude Code.
+3. If the helper script is missing or not executable, re-run setup to regenerate it:
+   ```bash
+   bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --reinstall
+   ```
+
+---
+
+#### Claude Code returns "authentication failed" or 401 errors
+
+Your OAuth session has likely expired. OAuth sessions expire after a period of inactivity.
+
+1. Re-authenticate:
+   ```bash
+   bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --reauth
+   ```
+2. Verify the session is now valid:
+   ```bash
+   bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --status
+   ```
+3. Restart Claude Code:
+   ```bash
+   claude
+   ```
+
+---
+
+#### Model not found or "endpoint does not exist"
+
+The configured model name does not match any serving endpoint in your workspace.
+
+1. List available endpoints to find the correct name:
+   ```bash
+   bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --list-models
+   ```
+2. Re-run setup and select the correct model IDs:
+   ```bash
+   bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh
+   ```
+
+---
+
+#### Claude Code starts but responses are slow or time out
+
+This is usually a serving endpoint issue, not a setup issue. Check that your endpoints are in READY state:
+
+```bash
+bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --validate-models
+```
+
+If any model shows **WARN** (exists but not READY), the endpoint may be provisioning or unhealthy. Check the endpoint status in your Databricks workspace UI.
+
+---
+
+#### Setup script says "databricks: command not found"
+
+The Databricks CLI is not installed or not on your `PATH`. The setup script installs it automatically, but if that failed:
+
+- **macOS:** `brew install databricks`
+- **Linux:** `curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh`
+
+Then re-run setup.
+
+---
+
+#### Still stuck?
+
+If none of the above help, run a full diagnostic and review the output:
+
+```bash
+bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --doctor --verbose
+```
+
+The `--verbose` flag adds debug-level detail to every check. Look for any **FAIL** lines &mdash; each includes a suggested fix.
 
 ## Other Agents
 
