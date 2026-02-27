@@ -34,14 +34,26 @@ gather_config_pre_auth() {
 
   # ── Workspace URL ─────────────────────────────────────────────────────────
   prompt_value DATABRICKS_HOST "Databricks workspace URL" "$CLI_HOST" "$default_host"
-  [[ -z "$DATABRICKS_HOST" ]] && { error "Workspace URL is required."; exit 1; }
+  if [[ -z "$DATABRICKS_HOST" ]]; then
+    error "Workspace URL is required."
+    exit 1
+  fi
   DATABRICKS_HOST="${DATABRICKS_HOST%/}"
-  [[ "$DATABRICKS_HOST" != https://* ]] && { error "Workspace URL must start with https://"; exit 1; }
+  if [[ "$DATABRICKS_HOST" != https://* ]]; then
+    error "Workspace URL must start with https://"
+    exit 1
+  fi
 
   # ── CLI profile ───────────────────────────────────────────────────────────
   prompt_value DATABRICKS_PROFILE "Databricks CLI profile name" "$CLI_PROFILE" "$default_profile"
-  [[ -z "$DATABRICKS_PROFILE" ]] && { error "Profile name is required."; exit 1; }
-  [[ "$DATABRICKS_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]] || { error "Invalid profile name: '$DATABRICKS_PROFILE'. Use letters, numbers, hyphens, and underscores."; exit 1; }
+  if [[ -z "$DATABRICKS_PROFILE" ]]; then
+    error "Profile name is required."
+    exit 1
+  fi
+  if [[ ! "$DATABRICKS_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    error "Invalid profile name: '$DATABRICKS_PROFILE'. Use letters, numbers, hyphens, and underscores."
+    exit 1
+  fi
 
   # ── Token refresh interval ───────────────────────────────────────────────
   prompt_value FMAPI_TTL_MINUTES "Token refresh interval (minutes)" "$CLI_TTL" "$default_ttl"
@@ -85,7 +97,10 @@ gather_config_pre_auth() {
         ;;
       3)
         read -rp "$(echo -e "  ${CYAN}?${RESET} Base path: ")" CUSTOM_PATH
-        [[ -z "$CUSTOM_PATH" ]] && { error "Custom path is required."; exit 1; }
+        if [[ -z "$CUSTOM_PATH" ]]; then
+          error "Custom path is required."
+          exit 1
+        fi
         CUSTOM_PATH="${CUSTOM_PATH/#\~/$HOME}"
         mkdir -p "$CUSTOM_PATH"
         SETTINGS_BASE="$(cd "$CUSTOM_PATH" && pwd)"
@@ -188,12 +203,8 @@ install_dependencies() {
 authenticate() {
   [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}Authenticating${RESET}"
 
-  get_oauth_token() {
-    databricks auth token --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
-      | jq -r '.access_token // empty'
-  }
-
-  OAUTH_TOKEN=$(get_oauth_token) || true
+  local OAUTH_TOKEN=""
+  OAUTH_TOKEN=$(_get_oauth_token "$DATABRICKS_PROFILE") || true
   debug "authenticate: existing token=${OAUTH_TOKEN:+present}${OAUTH_TOKEN:-missing}"
   if [[ -z "$OAUTH_TOKEN" ]]; then
     if _is_headless; then
@@ -201,13 +212,17 @@ authenticate() {
     fi
     info "Logging in to ${DATABRICKS_HOST} ..."
     databricks auth login --host "$DATABRICKS_HOST" --profile "$DATABRICKS_PROFILE"
-    OAUTH_TOKEN=$(get_oauth_token)
+    OAUTH_TOKEN=$(_get_oauth_token "$DATABRICKS_PROFILE")
   fi
 
-  [[ -z "$OAUTH_TOKEN" ]] && { error "Failed to get OAuth access token."; exit 1; }
+  if [[ -z "$OAUTH_TOKEN" ]]; then
+    error "Failed to get OAuth access token."
+    exit 1
+  fi
   success "OAuth session established."
 
   # Clean up any legacy FMAPI PATs from prior installations
+  local OLD_PAT_IDS=""
   OLD_PAT_IDS=$(databricks tokens list --profile "$DATABRICKS_PROFILE" --output json 2>/dev/null \
     | jq -r '.[] | select((.comment // "") | startswith("Claude Code FMAPI")) | .token_id' 2>/dev/null) || true
   if [[ -n "$OLD_PAT_IDS" ]]; then
@@ -219,7 +234,7 @@ authenticate() {
   fi
 
   # Clean up legacy cache file if present
-  LEGACY_CACHE="${SETTINGS_BASE}/.claude/.fmapi-pat-cache"
+  local LEGACY_CACHE="${SETTINGS_BASE}/.claude/.fmapi-pat-cache"
   if [[ -f "$LEGACY_CACHE" ]]; then
     rm -f "$LEGACY_CACHE"
     success "Removed legacy PAT cache."
@@ -233,6 +248,7 @@ write_settings() {
 
   TTL_MS="$FMAPI_TTL_MS"
 
+  local env_json=""
   env_json=$(jq -n \
     --arg model "$ANTHROPIC_MODEL" \
     --arg base  "${DATABRICKS_HOST}/serving-endpoints/anthropic" \
@@ -252,6 +268,7 @@ write_settings() {
     }')
 
   if [[ -f "$SETTINGS_FILE" ]]; then
+    local tmpfile=""
     tmpfile=$(mktemp "${SETTINGS_FILE}.XXXXXX")
     _CLEANUP_FILES+=("$tmpfile")
     jq --argjson new_env "$env_json" --arg helper "$HELPER_FILE" \
@@ -309,6 +326,7 @@ write_helper() {
     exit 1
   fi
 
+  local helper_tmp=""
   helper_tmp=$(mktemp "${HELPER_FILE}.XXXXXX")
   _CLEANUP_FILES+=("$helper_tmp")
   sed "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g; s|__SETUP_SCRIPT__|${setup_script}|g" "$template" > "$helper_tmp"
@@ -320,17 +338,19 @@ write_helper() {
 
 register_plugin() {
   if [[ -f "${SCRIPT_DIR}/.claude-plugin/plugin.json" ]]; then
-    PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
+    local PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
     mkdir -p "$(dirname "$PLUGINS_FILE")"
 
-    NEEDS_INSTALL=true
+    local NEEDS_INSTALL=true
     if [[ -f "$PLUGINS_FILE" ]]; then
+      local existing_path=""
       existing_path=$(jq -r '.["fmapi-codingagent"].installPath // empty' "$PLUGINS_FILE" 2>/dev/null) || true
       [[ "$existing_path" == "$SCRIPT_DIR" ]] && NEEDS_INSTALL=false
     fi
 
     if [[ "$NEEDS_INSTALL" == true ]]; then
       if [[ -f "$PLUGINS_FILE" ]]; then
+        local plugin_tmp=""
         plugin_tmp=$(mktemp "${PLUGINS_FILE}.XXXXXX")
         _CLEANUP_FILES+=("$plugin_tmp")
         jq --arg path "$SCRIPT_DIR" \

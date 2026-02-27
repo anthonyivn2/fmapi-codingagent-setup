@@ -163,7 +163,10 @@ do_uninstall() {
   select_option "Remove FMAPI artifacts?" \
     "Yes|remove artifacts listed above" \
     "No|cancel and exit"
-  [[ "$SELECT_RESULT" -ne 1 ]] && { info "Cancelled."; exit 0; }
+  if [[ "$SELECT_RESULT" -ne 1 ]]; then
+    info "Cancelled."
+    exit 0
+  fi
 
   echo ""
 
@@ -234,7 +237,10 @@ do_uninstall() {
 
 do_list_models() {
   _require_fmapi_config "list-models"
-  [[ -z "$CFG_HOST" ]] && { error "Could not determine host from helper script."; exit 1; }
+  if [[ -z "$CFG_HOST" ]]; then
+    error "Could not determine host from helper script."
+    exit 1
+  fi
   _require_valid_oauth
 
   echo -e "\n${BOLD}  FMAPI Anthropic Claude Serving Endpoints${RESET}"

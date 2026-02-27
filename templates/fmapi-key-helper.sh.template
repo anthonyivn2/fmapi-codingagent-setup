@@ -59,12 +59,12 @@ fi
 echo "FMAPI: OAuth session expired — attempting re-authentication ..." > "$_out"
 
 # Use timeout if available (standard on Linux, may not exist on macOS)
-_reauth_cmd="databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE"
 if command -v timeout >/dev/null 2>&1; then
-  _reauth_cmd="timeout 30 $_reauth_cmd"
+  _reauth_ok=false; timeout 30 databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" > "$_out" 2>&1 && _reauth_ok=true
+else
+  _reauth_ok=false; databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" > "$_out" 2>&1 && _reauth_ok=true
 fi
-
-if eval "$_reauth_cmd" > "$_out" 2>&1; then
+if [ "$_reauth_ok" = true ]; then
   token=$(_fetch_token) || true
   if [ -n "$token" ]; then
     echo "FMAPI: Re-authentication successful." > "$_out"
