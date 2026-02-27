@@ -27,7 +27,7 @@ DRY_RUN=false
 
 # ── Version ──────────────────────────────────────────────────────────────────
 if [[ -f "${SCRIPT_DIR}/VERSION" ]]; then
-  FMAPI_VERSION="$(cat "${SCRIPT_DIR}/VERSION" | tr -d '[:space:]')"
+  FMAPI_VERSION="$(tr -d '[:space:]' < "${SCRIPT_DIR}/VERSION")"
 else
   FMAPI_VERSION="dev"
 fi

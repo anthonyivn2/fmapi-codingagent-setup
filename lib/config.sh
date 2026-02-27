@@ -136,7 +136,7 @@ load_config_url() {
   _CLEANUP_FILES+=("$tmp_config")
 
   local http_code=""
-  http_code=$(curl -fsSL -w '%{http_code}' -o "$tmp_config" "$url" 2>/dev/null) || {
+  http_code=$(curl -fsSL --max-time 30 -w '%{http_code}' -o "$tmp_config" "$url" 2>/dev/null) || {
     error "Failed to fetch config from URL: $url"
     exit 1
   }

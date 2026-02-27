@@ -89,8 +89,20 @@ do_uninstall() {
   # ── Discover FMAPI artifacts ──────────────────────────────────────────────
   declare -a helper_scripts=()
   declare -a settings_files=()
-  # Check well-known settings locations for apiKeyHelper or _fmapi_meta
-  for candidate in "$HOME/.claude/settings.json" "./.claude/settings.json"; do
+
+  # Try to discover any custom settings location from existing config
+  local extra_candidate=""
+  if command -v databricks &>/dev/null; then
+    discover_config
+    if [[ "$CFG_FOUND" == true && -n "$CFG_SETTINGS_FILE" ]]; then
+      extra_candidate="$CFG_SETTINGS_FILE"
+    fi
+  fi
+
+  # Check well-known settings locations + any discovered custom location
+  declare -a candidates=("$HOME/.claude/settings.json" "./.claude/settings.json")
+  [[ -n "$extra_candidate" ]] && candidates+=("$extra_candidate")
+  for candidate in "${candidates[@]}"; do
     [[ -f "$candidate" ]] || continue
     local abs_path=""
     abs_path=$(cd "$(dirname "$candidate")" && echo "$(pwd)/$(basename "$candidate")")
@@ -493,16 +505,25 @@ do_self_update() {
     exit 1
   fi
 
+  # ── Detect current branch ────────────────────────────────────────────────
+  local branch=""
+  branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+  if [[ -z "$branch" || "$branch" == "HEAD" ]]; then
+    branch="main"
+    debug "Detached HEAD detected, defaulting to main."
+  fi
+  debug "Branch: ${branch}"
+
   # ── Fetch and check for updates ──────────────────────────────────────────
   info "Checking for updates..."
-  if ! git -C "${SCRIPT_DIR}" fetch --quiet origin main 2>/dev/null; then
+  if ! git -C "${SCRIPT_DIR}" fetch --quiet origin "$branch" 2>/dev/null; then
     error "Failed to fetch from remote. Check your network connection."
     exit 1
   fi
 
   local local_rev="" remote_rev=""
   local_rev=$(git -C "${SCRIPT_DIR}" rev-parse HEAD)
-  remote_rev=$(git -C "${SCRIPT_DIR}" rev-parse origin/main)
+  remote_rev=$(git -C "${SCRIPT_DIR}" rev-parse "origin/${branch}")
 
   if [[ "$local_rev" == "$remote_rev" ]]; then
     success "Already up to date (${current_version})."
@@ -512,21 +533,21 @@ do_self_update() {
 
   # ── Show what's changing ─────────────────────────────────────────────────
   local commit_count=""
-  commit_count=$(git -C "${SCRIPT_DIR}" rev-list --count HEAD..origin/main)
+  commit_count=$(git -C "${SCRIPT_DIR}" rev-list --count "HEAD..origin/${branch}")
   info "${commit_count} new commit(s) available."
 
   # ── Pull updates ─────────────────────────────────────────────────────────
   info "Updating..."
-  if ! git -C "${SCRIPT_DIR}" pull --quiet origin main 2>/dev/null; then
+  if ! git -C "${SCRIPT_DIR}" pull --quiet origin "$branch" 2>/dev/null; then
     error "Failed to pull updates. You may have local changes."
-    info "Fix with: ${CYAN}cd ${SCRIPT_DIR} && git stash && git pull origin main${RESET}"
+    info "Fix with: ${CYAN}cd ${SCRIPT_DIR} && git stash && git pull origin ${branch}${RESET}"
     exit 1
   fi
 
   # ── Show new version ─────────────────────────────────────────────────────
   local new_version="unknown"
   if [[ -f "${SCRIPT_DIR}/VERSION" ]]; then
-    new_version=$(cat "${SCRIPT_DIR}/VERSION" | tr -d '[:space:]')
+    new_version=$(tr -d '[:space:]' < "${SCRIPT_DIR}/VERSION")
   fi
 
   success "Updated: ${current_version} → ${new_version}"

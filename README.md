@@ -5,7 +5,7 @@
 - **Leverage Popular Coding Agents against models hosted in your Databricks workspace** &mdash; route all API calls through [Databricks Foundation Model API (FMAPI)](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis)
 - **Built-in Usage Tracking and Payload Logging through Databricks AI Gateway** Leverage Databricks's [AI Gateway Usage Tracking](https://docs.databricks.com/aws/en/ai-gateway/configure-ai-gateway-endpoints#configure-ai-gateway-using-the-ui) to track and audit Coding Agent usage for your organization, and track your Coding Agent request and response payload through the use of [AI Gateway Inference Table](https://docs.databricks.com/aws/en/ai-gateway/inference-tables)
 - **One-command setup** &mdash; installs dependencies, authenticates via OAuth, and configures everything
-- **Automatic OAuth token * &mdash; no PATs to rotate or manage
+- **Automatic OAuth token management** &mdash; no PATs to rotate or manage
 - **Built-in diagnostics and model validation** &mdash; `--doctor`, `--list-models`, `--validate-models`
 - **Plugin slash commands** &mdash; manage your FMAPI config without leaving Claude Code
 

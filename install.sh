@@ -67,7 +67,7 @@ fi
 
 local_version="unknown"
 if [[ -f "${INSTALL_DIR}/VERSION" ]]; then
-  local_version=$(cat "${INSTALL_DIR}/VERSION" | tr -d '[:space:]')
+  local_version=$(tr -d '[:space:]' < "${INSTALL_DIR}/VERSION")
 fi
 
 # ── Print next steps ─────────────────────────────────────────────────────────
@@ -76,12 +76,12 @@ success "fmapi-codingagent-setup v${local_version} installed to ${INSTALL_DIR}"
 echo ""
 echo -e "  ${BOLD}Next steps:${RESET}"
 echo ""
-echo -e "  Run setup:"
+echo -e "  Run setup for Claude Code:"
 echo -e "    ${CYAN}bash ${INSTALL_DIR}/setup-fmapi-claudecode.sh${RESET}"
 echo ""
-echo -e "  Or non-interactive:"
+echo -e "  Run non-interactive setup for Claude Code:"
 echo -e "    ${CYAN}bash ${INSTALL_DIR}/setup-fmapi-claudecode.sh --host https://your-workspace.cloud.databricks.com${RESET}"
 echo ""
-echo -e "  Update later:"
+echo -e "  Update Claude Code setup to the latest version:"
 echo -e "    ${CYAN}bash ${INSTALL_DIR}/setup-fmapi-claudecode.sh --self-update${RESET}"
 echo ""
