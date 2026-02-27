@@ -152,11 +152,42 @@ bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --reinstall
 bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --uninstall
 ```
 
-1. Removes `fmapi-key-helper.sh` and any legacy cache files
-2. Cleans FMAPI-specific keys from `.claude/settings.json` (non-FMAPI settings are preserved; empty files are deleted)
-3. Deregisters the plugin from `~/.claude/plugins/installed_plugins.json`
+The uninstall command removes all FMAPI artifacts in order:
 
-Re-running `--uninstall` when nothing is installed is safe.
+1. **Helper scripts** &mdash; deletes `fmapi-key-helper.sh` and any legacy `.fmapi-pat-cache` files
+2. **Settings** &mdash; removes FMAPI-specific keys (`apiKeyHelper`, `ANTHROPIC_*`, etc.) from `.claude/settings.json`. Non-FMAPI settings are preserved; if no other settings remain, the file is deleted entirely
+3. **Plugin registration** &mdash; deregisters `fmapi-codingagent` from `~/.claude/plugins/installed_plugins.json`
+4. **Install directory** &mdash; removes `~/.fmapi-codingagent-setup/` (the default location created by `install.sh`)
+
+Before removing anything, the script lists all discovered artifacts and asks for confirmation. Re-running `--uninstall` when nothing is installed is safe &mdash; it reports "Nothing to uninstall" and exits.
+
+##### Manual Cleanup
+
+If you installed to a custom location using `FMAPI_HOME`, the uninstall command only removes the default path. Delete your custom install directory manually:
+
+```bash
+rm -rf /path/to/your/custom/install
+```
+
+To fully clean up all possible FMAPI-related paths by hand (e.g. if the setup script is already gone):
+
+```bash
+# Remove the install directory (default location)
+rm -rf ~/.fmapi-codingagent-setup
+
+# Remove the helper script (default location)
+rm -f ~/.claude/fmapi-key-helper.sh
+
+# Remove FMAPI plugin registration (edit or delete)
+# If fmapi-codingagent is the only plugin:
+rm -f ~/.claude/plugins/installed_plugins.json
+# Otherwise, remove the "fmapi-codingagent" key from the JSON file
+
+# Remove FMAPI keys from settings (edit or delete)
+# If FMAPI is the only config in ~/.claude/settings.json:
+rm -f ~/.claude/settings.json
+# Otherwise, remove apiKeyHelper and the ANTHROPIC_* / CLAUDE_CODE_* env keys from the JSON file
+```
 
 #### Updating
 

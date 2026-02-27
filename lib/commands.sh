@@ -87,6 +87,8 @@ do_uninstall() {
   require_cmd jq "jq is required for uninstall. Install with: $(_install_hint jq)"
 
   # ── Discover FMAPI artifacts ──────────────────────────────────────────────
+  local default_install_dir="${HOME}/.fmapi-codingagent-setup"
+
   declare -a helper_scripts=()
   declare -a settings_files=()
 
@@ -135,7 +137,7 @@ do_uninstall() {
   done
 
   # ── Early exit if nothing found ──────────────────────────────────────────
-  if [[ ${#helper_scripts[@]} -eq 0 && ${#settings_files[@]} -eq 0 ]]; then
+  if [[ ${#helper_scripts[@]} -eq 0 && ${#settings_files[@]} -eq 0 && ! -d "$default_install_dir" ]]; then
     info "Nothing to uninstall. No FMAPI artifacts found."
     exit 0
   fi
@@ -156,6 +158,12 @@ do_uninstall() {
     for sf in "${settings_files[@]}"; do
       echo -e "    ${DIM}${sf}${RESET}"
     done
+    echo ""
+  fi
+
+  if [[ -d "$default_install_dir" ]]; then
+    echo -e "  ${CYAN}Install directory:${RESET}"
+    echo -e "    ${DIM}${default_install_dir}${RESET}"
     echo ""
   fi
 
@@ -229,6 +237,12 @@ do_uninstall() {
       mv "$ptmp" "$plugins_file"
       success "Removed plugin registration from ${plugins_file}."
     fi
+  fi
+
+  # ── Remove default install directory ──────────────────────────────────────
+  if [[ -d "$default_install_dir" ]]; then
+    rm -rf "$default_install_dir"
+    success "Removed install directory ${default_install_dir}."
   fi
 
   # ── Summary ──────────────────────────────────────────────────────────────
