@@ -7,7 +7,14 @@ This repo contains setup scripts and a Claude Code plugin that configure coding 
 ## Repository Structure
 
 ```
-setup-fmapi-claudecode.sh                          # Claude Code setup script (bash)
+setup-fmapi-claudecode.sh                          # Thin entry point: source libs, parse CLI, dispatch
+lib/
+  core.sh                                          # Preamble, colors, logging, utilities, _install_hint
+  help.sh                                          # show_help (help text)
+  config.sh                                        # Config discovery and file/URL loading
+  shared.sh                                        # OAuth, endpoints, validation, shared helpers
+  commands.sh                                      # All do_* command functions
+  setup.sh                                         # Setup workflow (gather, install, auth, write, smoke test)
 example-config.json                                # Example config file for --config / --config-url
 .claude-plugin/plugin.json                         # Claude Code plugin manifest
 skills/fmapi-codingagent-status/SKILL.md           # /fmapi-codingagent-status skill
@@ -46,12 +53,33 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 
 ## Key Concepts
 
-- **`setup-fmapi-claudecode.sh`** — Bash script that installs dependencies (Claude Code, Databricks CLI), authenticates via OAuth, writes `.claude/settings.json`, and generates `fmapi-key-helper.sh`. Supports `--status`, `--reauth`, `--doctor`, `--list-models`, `--validate-models`, `--uninstall`, `--config`, `--config-url`, and CLI flags for non-interactive setup. Passing `--host`, `--config`, or `--config-url` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
+- **`setup-fmapi-claudecode.sh`** — Thin entry point (~120 lines) that sources `lib/*.sh` modules, parses CLI flags, and dispatches to the appropriate command or setup flow. Supports `--status`, `--reauth`, `--doctor`, `--list-models`, `--validate-models`, `--uninstall`, `--config`, `--config-url`, and CLI flags for non-interactive setup. Passing `--host`, `--config`, or `--config-url` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
 - **`example-config.json`** — Example JSON config file showing all supported keys. Used with `--config` or hosted remotely for `--config-url` to enable reproducible, shareable team setups. Priority chain: CLI flags > config file > existing settings > hardcoded defaults.
 - **`.claude-plugin/plugin.json`** — Plugin manifest that registers the repo as a Claude Code plugin with the `skills/` directory.
 - **`skills/*/SKILL.md`** — Skill definitions that instruct Claude how to invoke the setup script with the appropriate flags.
 - **`fmapi-key-helper.sh`** — A POSIX `/bin/sh` script generated alongside `settings.json` that Claude Code invokes automatically via the `apiKeyHelper` setting to obtain OAuth access tokens on demand. The Databricks CLI handles token refresh transparently.
 - **`.claude/settings.json`** — Claude Code configuration file containing `apiKeyHelper` (path to helper script) and environment variables that route requests through Databricks FMAPI.
+
+## Module Architecture
+
+The setup script is split into six sourced library modules under `lib/`. The entry point sources them in order: `core.sh` → `help.sh` → `config.sh` → `shared.sh` → `commands.sh` → `setup.sh`. Each module depends only on modules sourced before it.
+
+| Module | Contents |
+|---|---|
+| `lib/core.sh` | Cleanup trap, ANSI colors, `_OS_TYPE`/`VERBOSITY`/`DRY_RUN` globals, logging (`info`, `success`, `error`, `debug`), utilities (`array_contains`, `require_cmd`, `_install_hint`, `prompt_value`, `select_option`) |
+| `lib/help.sh` | `show_help()` — static help text, no dependencies |
+| `lib/config.sh` | `discover_config()`, `_CONFIG_VALID_KEYS`, `load_config_file()`, `load_config_url()` |
+| `lib/shared.sh` | `_get_oauth_token()`, `_fetch_endpoints()`, `_validate_models_report()`, plus shared helpers: `_is_headless()`, `_require_fmapi_config()`, `_require_valid_oauth()` |
+| `lib/commands.sh` | `do_status()`, `do_reauth()`, `do_uninstall()`, `do_list_models()`, `do_validate_models()`, `do_doctor()` (with `_doctor_*` sub-functions) |
+| `lib/setup.sh` | `gather_config()`, `install_dependencies()`, `authenticate()`, `write_settings()`, `write_helper()`, `register_plugin()`, `run_smoke_test()`, `print_summary()`, `print_dry_run_plan()`, `do_setup()` |
+
+Key shared helpers that deduplicate repeated patterns:
+- **`_install_hint(cmd)`** — Platform-appropriate install hint for any dependency (jq, databricks, claude, curl)
+- **`_is_headless()`** — Detects headless SSH sessions (replaces 3 inline checks)
+- **`_require_fmapi_config(caller)`** — Common preamble: require jq + databricks, discover config, validate profile
+- **`_require_valid_oauth()`** — Check OAuth token validity with standard error message
+
+The global `SCRIPT_DIR` is computed once in the entry point and used by `write_helper()`, `register_plugin()`, and `print_dry_run_plan()` instead of `BASH_SOURCE[0]` (which would point to the sourced lib file, not the entry script).
 
 ## CLI Flags
 
@@ -91,6 +119,9 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 - **Dependencies**: `jq`, `curl`, `tput`, `databricks` CLI. On macOS, `brew` is used for installation; on Linux, `apt-get`/`yum` and curl installers are used. Do not introduce additional dependencies without good reason.
 - **Never commit** `.claude/settings.json`, `fmapi-key-helper.sh`, or other files containing tokens.
 - Use [ShellCheck](https://www.shellcheck.net/) conventions when editing scripts.
+- **Module boundaries**: Add new functions to the appropriate `lib/` module based on the architecture table above. Do not add functions to the entry point — it should remain a thin dispatcher.
+- **`set -e` and functions**: Never end a function with `[[ ... ]] && { ...; exit 1; }` — use `if`/`then`/`fi` instead. The `&&` pattern returns 1 when the condition is false, which triggers `set -e` at the call site.
+- **`BASH_SOURCE[0]`**: In sourced lib files, `BASH_SOURCE[0]` points to the lib file, not the entry script. Use the global `SCRIPT_DIR` variable instead for paths relative to the repository root.
 
 ## Testing Changes
 
