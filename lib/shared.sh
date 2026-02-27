@@ -87,6 +87,60 @@ _validate_models_report() {
   done
 }
 
+# Display Claude/Anthropic endpoints from _ENDPOINTS_JSON as a formatted table.
+# Accepts optional model names as positional args to highlight in the table.
+# Returns 1 if no Claude endpoints found, 0 otherwise.
+_display_claude_endpoints() {
+  local highlight_models=("$@")
+
+  # Filter to Claude/Anthropic endpoints only
+  local filtered=""
+  filtered=$(echo "$_ENDPOINTS_JSON" | jq '[.[] | select(.name | test("claude|anthropic"; "i"))]') || true
+  local count=""
+  count=$(echo "$filtered" | jq 'length') || true
+  if [[ "$count" == "0" || -z "$count" ]]; then
+    return 1
+  fi
+
+  # Print table header — pad plain text first, then wrap with BOLD
+  local col_w=44
+  local state_w=12
+  local hdr_name hdr_state
+  hdr_name=$(printf "%-${col_w}s" "ENDPOINT NAME")
+  hdr_state=$(printf "%-${state_w}s" "STATE")
+  echo -e "     ${BOLD}${hdr_name}${RESET} ${BOLD}${hdr_state}${RESET} ${BOLD}TYPE${RESET}"
+  echo -e "  ${DIM}$(printf '%.0s─' {1..70})${RESET}"
+
+  # Print each endpoint — pad plain text first, then wrap with color to keep columns aligned
+  echo "$filtered" | jq -r '.[] | [.name, (.state.ready // .state // "UNKNOWN"), (.endpoint_type // .task // "unknown")] | @tsv' 2>/dev/null \
+  | while IFS=$'\t' read -r name state etype; do
+    local marker="   "
+    local display_name="$name"
+    if [[ ${#display_name} -gt $col_w ]]; then
+      display_name="${display_name:0:$((col_w - 1))}…"
+    fi
+    local padded_name padded_state
+    padded_name=$(printf "%-${col_w}s" "$display_name")
+    padded_state=$(printf "%-${state_w}s" "$state")
+
+    # Highlight models passed as arguments
+    if array_contains "$name" ${highlight_models[@]+"${highlight_models[@]}"}; then
+      marker=" ${GREEN}>${RESET} "
+      padded_name="${GREEN}${BOLD}${padded_name}${RESET}"
+    fi
+
+    if [[ "$state" == "READY" ]]; then
+      padded_state="${GREEN}$(printf "%-${state_w}s" "$state")${RESET}"
+    elif [[ "$state" == "NOT_READY" ]]; then
+      padded_state="${YELLOW}$(printf "%-${state_w}s" "$state")${RESET}"
+    fi
+
+    echo -e "  ${marker}${padded_name} ${padded_state} ${etype}"
+  done
+
+  return 0
+}
+
 # ── Deduplication helpers ─────────────────────────────────────────────────────
 
 # Detect headless SSH sessions (no browser for OAuth)

@@ -17,6 +17,8 @@ lib/
   shared.sh                                        # OAuth, endpoints, validation, shared helpers
   commands.sh                                      # All do_* command functions
   setup.sh                                         # Setup workflow (gather, install, auth, write, smoke test)
+templates/
+  fmapi-key-helper.sh.template                     # POSIX helper script template with __PROFILE__, __HOST__, __SETUP_SCRIPT__ placeholders
 example-config.json                                # Example config file for --config / --config-url
 .claude-plugin/plugin.json                         # Claude Code plugin manifest
 skills/fmapi-codingagent-status/SKILL.md           # /fmapi-codingagent-status skill
@@ -75,7 +77,7 @@ The setup script is split into six sourced library modules under `lib/`. The ent
 | `lib/config.sh` | `discover_config()`, `_CONFIG_VALID_KEYS`, `load_config_file()`, `load_config_url()` |
 | `lib/shared.sh` | `_get_oauth_token()`, `_fetch_endpoints()`, `_validate_models_report()`, plus shared helpers: `_is_headless()`, `_require_fmapi_config()`, `_require_valid_oauth()` |
 | `lib/commands.sh` | `do_status()`, `do_reauth()`, `do_uninstall()`, `do_list_models()`, `do_validate_models()`, `do_self_update()`, `do_doctor()` (with `_doctor_*` sub-functions) |
-| `lib/setup.sh` | `gather_config()`, `install_dependencies()`, `authenticate()`, `write_settings()`, `write_helper()`, `register_plugin()`, `run_smoke_test()`, `print_summary()`, `print_dry_run_plan()`, `do_setup()` |
+| `lib/setup.sh` | `gather_config_pre_auth()`, `gather_config_models()`, `install_dependencies()`, `authenticate()`, `write_settings()`, `ensure_onboarding()`, `write_helper()`, `register_plugin()`, `run_smoke_test()`, `print_summary()`, `print_dry_run_plan()`, `do_setup()` |
 
 Key shared helpers that deduplicate repeated patterns:
 - **`_install_hint(cmd)`** — Platform-appropriate install hint for any dependency (jq, databricks, claude, curl)

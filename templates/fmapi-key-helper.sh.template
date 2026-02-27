@@ -1,0 +1,79 @@
+#!/bin/sh
+set -eu
+
+FMAPI_PROFILE="__PROFILE__"
+FMAPI_HOST="__HOST__"
+
+# Verify required commands exist
+if ! command -v databricks >/dev/null 2>&1; then
+  echo "FMAPI: databricks CLI not found. Install it and ensure it is on your PATH." >&2
+  exit 1
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "FMAPI: jq not found. Install it and ensure it is on your PATH." >&2
+  exit 1
+fi
+
+# Get OAuth access token (databricks CLI auto-refreshes using refresh token)
+_fetch_token() {
+  databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
+    | jq -r '.access_token // empty'
+}
+
+token=$(_fetch_token) || true
+
+# Retry once after a short delay for transient failures (network blip, CLI lock)
+if [ -z "$token" ]; then
+  echo "FMAPI: Token fetch failed for profile '$FMAPI_PROFILE', retrying ..." >&2
+  sleep 2
+  token=$(_fetch_token) || true
+fi
+
+if [ -n "$token" ]; then
+  echo "$token"
+  exit 0
+fi
+
+# Detect headless environments (SSH without display forwarding)
+_is_headless() {
+  [ -n "${SSH_CONNECTION:-}" ] && [ -z "${DISPLAY:-}" ] && return 0
+  [ -n "${SSH_TTY:-}" ] && [ -z "${DISPLAY:-}" ] && return 0
+  [ ! -e /dev/tty ] && return 0
+  return 1
+}
+
+# Refresh token likely expired — attempt browser-based re-authentication
+if _is_headless; then
+  echo "FMAPI: OAuth session expired in a headless environment." >&2
+  echo "FMAPI: Re-authenticate from a machine with a browser:" >&2
+  echo "FMAPI:   databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" >&2
+  exit 1
+fi
+
+if [ -e /dev/tty ]; then
+  _out="/dev/tty"
+else
+  _out="/dev/stderr"
+fi
+
+echo "FMAPI: OAuth session expired — attempting re-authentication ..." > "$_out"
+
+# Use timeout if available (standard on Linux, may not exist on macOS)
+_reauth_cmd="databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE"
+if command -v timeout >/dev/null 2>&1; then
+  _reauth_cmd="timeout 30 $_reauth_cmd"
+fi
+
+if eval "$_reauth_cmd" > "$_out" 2>&1; then
+  token=$(_fetch_token) || true
+  if [ -n "$token" ]; then
+    echo "FMAPI: Re-authentication successful." > "$_out"
+    echo "$token"
+    exit 0
+  fi
+fi
+
+echo "FMAPI: Re-authentication failed. Run one of the following:" >&2
+echo "FMAPI:   bash __SETUP_SCRIPT__ --reauth" >&2
+echo "FMAPI:   databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" >&2
+exit 1

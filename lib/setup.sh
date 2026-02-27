@@ -4,7 +4,7 @@
 
 # ── Setup functions ───────────────────────────────────────────────────────────
 
-gather_config() {
+gather_config_pre_auth() {
   # Initialize CFG_* defaults (discover_config sets these, but jq may not be available yet)
   CFG_FOUND=false CFG_HOST="" CFG_PROFILE=""
   CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
@@ -21,14 +21,16 @@ gather_config() {
   # Resolve defaults: CLI flag > config file > discovered config > hardcoded default
   _default() { echo "${1:-${2:-${3:-${4:-}}}}"; }
 
-  local default_host default_profile default_model default_opus default_sonnet default_haiku default_ttl
+  local default_host default_profile default_ttl
   default_host=$(_default "$CLI_HOST" "$FILE_HOST" "$CFG_HOST" "")
   default_profile=$(_default "$CLI_PROFILE" "$FILE_PROFILE" "$CFG_PROFILE" "fmapi-claudecode-profile")
-  default_model=$(_default "$CLI_MODEL" "$FILE_MODEL" "$CFG_MODEL" "databricks-claude-opus-4-6")
-  default_opus=$(_default "$CLI_OPUS" "$FILE_OPUS" "$CFG_OPUS" "databricks-claude-opus-4-6")
-  default_sonnet=$(_default "$CLI_SONNET" "$FILE_SONNET" "$CFG_SONNET" "databricks-claude-sonnet-4-6")
-  default_haiku=$(_default "$CLI_HAIKU" "$FILE_HAIKU" "$CFG_HAIKU" "databricks-claude-haiku-4-5")
   default_ttl=$(_default "$CLI_TTL" "$FILE_TTL" "$CFG_TTL" "30")
+
+  # Store model defaults as globals for gather_config_models()
+  _DEFAULT_MODEL=$(_default "$CLI_MODEL" "$FILE_MODEL" "$CFG_MODEL" "databricks-claude-opus-4-6")
+  _DEFAULT_OPUS=$(_default "$CLI_OPUS" "$FILE_OPUS" "$CFG_OPUS" "databricks-claude-opus-4-6")
+  _DEFAULT_SONNET=$(_default "$CLI_SONNET" "$FILE_SONNET" "$CFG_SONNET" "databricks-claude-sonnet-4-6")
+  _DEFAULT_HAIKU=$(_default "$CLI_HAIKU" "$FILE_HAIKU" "$CFG_HAIKU" "databricks-claude-haiku-4-5")
 
   # ── Workspace URL ─────────────────────────────────────────────────────────
   prompt_value DATABRICKS_HOST "Databricks workspace URL" "$CLI_HOST" "$default_host"
@@ -40,12 +42,6 @@ gather_config() {
   prompt_value DATABRICKS_PROFILE "Databricks CLI profile name" "$CLI_PROFILE" "$default_profile"
   [[ -z "$DATABRICKS_PROFILE" ]] && { error "Profile name is required."; exit 1; }
   [[ "$DATABRICKS_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]] || { error "Invalid profile name: '$DATABRICKS_PROFILE'. Use letters, numbers, hyphens, and underscores."; exit 1; }
-
-  # ── Models ────────────────────────────────────────────────────────────────
-  prompt_value ANTHROPIC_MODEL "Model" "$CLI_MODEL" "$default_model"
-  prompt_value ANTHROPIC_OPUS_MODEL "Opus model" "$CLI_OPUS" "$default_opus"
-  prompt_value ANTHROPIC_SONNET_MODEL "Sonnet model" "$CLI_SONNET" "$default_sonnet"
-  prompt_value ANTHROPIC_HAIKU_MODEL "Haiku model" "$CLI_HAIKU" "$default_haiku"
 
   # ── Token refresh interval ───────────────────────────────────────────────
   prompt_value FMAPI_TTL_MINUTES "Token refresh interval (minutes)" "$CLI_TTL" "$default_ttl"
@@ -100,8 +96,17 @@ gather_config() {
   SETTINGS_FILE="${SETTINGS_BASE}/.claude/settings.json"
   HELPER_FILE="${SETTINGS_BASE}/.claude/fmapi-key-helper.sh"
 
-  debug "gather_config: host=${DATABRICKS_HOST} profile=${DATABRICKS_PROFILE} model=${ANTHROPIC_MODEL}"
-  debug "gather_config: settings=${SETTINGS_FILE} helper=${HELPER_FILE}"
+  debug "gather_config_pre_auth: host=${DATABRICKS_HOST} profile=${DATABRICKS_PROFILE}"
+  debug "gather_config_pre_auth: settings=${SETTINGS_FILE} helper=${HELPER_FILE}"
+}
+
+gather_config_models() {
+  prompt_value ANTHROPIC_MODEL "Model" "$CLI_MODEL" "$_DEFAULT_MODEL"
+  prompt_value ANTHROPIC_OPUS_MODEL "Opus model" "$CLI_OPUS" "$_DEFAULT_OPUS"
+  prompt_value ANTHROPIC_SONNET_MODEL "Sonnet model" "$CLI_SONNET" "$_DEFAULT_SONNET"
+  prompt_value ANTHROPIC_HAIKU_MODEL "Haiku model" "$CLI_HAIKU" "$_DEFAULT_HAIKU"
+
+  debug "gather_config_models: model=${ANTHROPIC_MODEL} opus=${ANTHROPIC_OPUS_MODEL} sonnet=${ANTHROPIC_SONNET_MODEL} haiku=${ANTHROPIC_HAIKU_MODEL}"
 }
 
 install_dependencies() {
@@ -296,93 +301,17 @@ ensure_onboarding() {
 write_helper() {
   [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}API key helper${RESET}"
 
-  cat > "$HELPER_FILE" << 'HELPER_SCRIPT'
-#!/bin/sh
-set -eu
-
-FMAPI_PROFILE="__PROFILE__"
-FMAPI_HOST="__HOST__"
-
-# Verify required commands exist
-if ! command -v databricks >/dev/null 2>&1; then
-  echo "FMAPI: databricks CLI not found. Install it and ensure it is on your PATH." >&2
-  exit 1
-fi
-if ! command -v jq >/dev/null 2>&1; then
-  echo "FMAPI: jq not found. Install it and ensure it is on your PATH." >&2
-  exit 1
-fi
-
-# Get OAuth access token (databricks CLI auto-refreshes using refresh token)
-_fetch_token() {
-  databricks auth token --profile "$FMAPI_PROFILE" --output json 2>/dev/null \
-    | jq -r '.access_token // empty'
-}
-
-token=$(_fetch_token) || true
-
-# Retry once after a short delay for transient failures (network blip, CLI lock)
-if [ -z "$token" ]; then
-  echo "FMAPI: Token fetch failed for profile '$FMAPI_PROFILE', retrying ..." >&2
-  sleep 2
-  token=$(_fetch_token) || true
-fi
-
-if [ -n "$token" ]; then
-  echo "$token"
-  exit 0
-fi
-
-# Detect headless environments (SSH without display forwarding)
-_is_headless() {
-  [ -n "${SSH_CONNECTION:-}" ] && [ -z "${DISPLAY:-}" ] && return 0
-  [ -n "${SSH_TTY:-}" ] && [ -z "${DISPLAY:-}" ] && return 0
-  [ ! -e /dev/tty ] && return 0
-  return 1
-}
-
-# Refresh token likely expired — attempt browser-based re-authentication
-if _is_headless; then
-  echo "FMAPI: OAuth session expired in a headless environment." >&2
-  echo "FMAPI: Re-authenticate from a machine with a browser:" >&2
-  echo "FMAPI:   databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" >&2
-  exit 1
-fi
-
-if [ -e /dev/tty ]; then
-  _out="/dev/tty"
-else
-  _out="/dev/stderr"
-fi
-
-echo "FMAPI: OAuth session expired — attempting re-authentication ..." > "$_out"
-
-# Use timeout if available (standard on Linux, may not exist on macOS)
-_reauth_cmd="databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE"
-if command -v timeout >/dev/null 2>&1; then
-  _reauth_cmd="timeout 30 $_reauth_cmd"
-fi
-
-if eval "$_reauth_cmd" > "$_out" 2>&1; then
-  token=$(_fetch_token) || true
-  if [ -n "$token" ]; then
-    echo "FMAPI: Re-authentication successful." > "$_out"
-    echo "$token"
-    exit 0
-  fi
-fi
-
-echo "FMAPI: Re-authentication failed. Run one of the following:" >&2
-echo "FMAPI:   bash __SETUP_SCRIPT__ --reauth" >&2
-echo "FMAPI:   databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" >&2
-exit 1
-HELPER_SCRIPT
-
+  local template="${SCRIPT_DIR}/templates/fmapi-key-helper.sh.template"
   local setup_script="${SCRIPT_DIR}/setup-fmapi-claudecode.sh"
+
+  if [[ ! -f "$template" ]]; then
+    error "Helper template not found: ${template}"
+    exit 1
+  fi
 
   helper_tmp=$(mktemp "${HELPER_FILE}.XXXXXX")
   _CLEANUP_FILES+=("$helper_tmp")
-  sed "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g; s|__SETUP_SCRIPT__|${setup_script}|g" "$HELPER_FILE" > "$helper_tmp"
+  sed "s|__PROFILE__|${DATABRICKS_PROFILE}|g; s|__HOST__|${DATABRICKS_HOST}|g; s|__SETUP_SCRIPT__|${setup_script}|g" "$template" > "$helper_tmp"
   mv "$helper_tmp" "$HELPER_FILE"
   chmod 700 "$HELPER_FILE"
   debug "write_helper: wrote ${HELPER_FILE} (profile=${DATABRICKS_PROFILE}, host=${DATABRICKS_HOST})"
@@ -580,15 +509,30 @@ print_dry_run_plan() {
 
 do_setup() {
   echo -e "\n${BOLD}  Claude Code x Databricks FMAPI Setup${RESET}\n"
-  gather_config
+  gather_config_pre_auth
 
   if [[ "$DRY_RUN" == true ]]; then
+    gather_config_models
     print_dry_run_plan
     exit 0
   fi
 
   install_dependencies
   authenticate
+
+  # Show available Claude endpoints before model selection (interactive only)
+  if [[ "$NON_INTERACTIVE" != true ]]; then
+    if _fetch_endpoints "$DATABRICKS_PROFILE" 2>/dev/null; then
+      echo -e "\n${BOLD}Available Claude endpoints${RESET}\n"
+      if ! _display_claude_endpoints; then
+        info "No Claude/Anthropic endpoints found. You can still enter model names manually."
+      fi
+      echo ""
+    fi
+  fi
+
+  gather_config_models
+
   write_settings
   ensure_onboarding
   write_helper
