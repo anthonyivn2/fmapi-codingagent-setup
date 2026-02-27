@@ -25,6 +25,13 @@ _OS_TYPE="$(uname -s 2>/dev/null || echo 'Unknown')"
 VERBOSITY=1  # 0=quiet, 1=normal, 2=verbose
 DRY_RUN=false
 
+# ── Version ──────────────────────────────────────────────────────────────────
+if [[ -f "${SCRIPT_DIR}/VERSION" ]]; then
+  FMAPI_VERSION="$(cat "${SCRIPT_DIR}/VERSION" | tr -d '[:space:]')"
+else
+  FMAPI_VERSION="dev"
+fi
+
 info()    { [[ "$VERBOSITY" -ge 1 ]] && echo -e "  ${CYAN}::${RESET} $1" || true; }
 success() { [[ "$VERBOSITY" -ge 1 ]] && echo -e "  ${GREEN}${BOLD}ok${RESET} $1" || true; }
 error()   { echo -e "\n  ${RED}${BOLD}!! ERROR${RESET}${RED} $1${RESET}\n" >&2; }

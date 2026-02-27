@@ -58,5 +58,6 @@ When `--host`, `--config`, or `--config-url` is provided, the script runs non-in
 |---|---|
 | `--status` | Check FMAPI configuration health (use `/fmapi-codingagent-status` instead) |
 | `--reauth` | Re-authenticate OAuth session (use `/fmapi-codingagent-reauth` instead) |
+| `--self-update` | Update to the latest version |
 | `--uninstall` | Remove all FMAPI artifacts |
 | `-h`, `--help` | Show help message |

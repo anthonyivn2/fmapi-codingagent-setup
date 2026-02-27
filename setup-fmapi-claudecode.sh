@@ -46,6 +46,7 @@ while [[ $# -gt 0 ]]; do
     --list-models)  ACTION="list-models"; shift ;;
     --validate-models) ACTION="validate-models"; shift ;;
     --reinstall)    ACTION="reinstall"; shift ;;
+    --self-update)  ACTION="self-update"; shift ;;
     --no-color)     BOLD='' DIM='' RED='' GREEN='' YELLOW='' CYAN='' RESET=''; shift ;;
     --verbose)      VERBOSITY=2; shift ;;
     --quiet|-q)     VERBOSITY=0; shift ;;
@@ -115,6 +116,7 @@ case "${ACTION}" in
   list-models)     do_list_models; exit 0 ;;
   validate-models) do_validate_models; exit 0 ;;
   uninstall)       do_uninstall; exit 0 ;;
+  self-update)     do_self_update; exit 0 ;;
 esac
 
 do_setup

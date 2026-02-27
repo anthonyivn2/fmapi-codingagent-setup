@@ -19,6 +19,9 @@ do_status() {
 
   echo -e "\n${BOLD}  FMAPI Status${RESET}\n"
 
+  echo -e "  ${DIM}Version${RESET}    ${BOLD}${FMAPI_VERSION:-unknown}${RESET}"
+  echo ""
+
   # ── Configuration ─────────────────────────────────────────────────────────
   echo -e "  ${BOLD}Configuration${RESET}"
   echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${CFG_HOST:-unknown}${RESET}"
@@ -337,6 +340,7 @@ _doctor_dependencies() {
       deps_ok=false
     fi
   done
+  echo -e "  ${DIM}fmapi-codingagent-setup${RESET}  ${FMAPI_VERSION:-unknown}"
   echo ""
   [[ "$deps_ok" == true ]]
 }
@@ -495,6 +499,63 @@ _doctor_models() {
   fi
   echo ""
   [[ "$models_ok" == true ]]
+}
+
+do_self_update() {
+  require_cmd git "git is required for self-update. Install git first."
+
+  echo -e "\n${BOLD}  FMAPI Self-Update${RESET}\n"
+
+  local current_version="${FMAPI_VERSION:-unknown}"
+  info "Current version: ${BOLD}${current_version}${RESET}"
+  info "Install path:    ${DIM}${SCRIPT_DIR}${RESET}"
+
+  # ── Check if this is a git repo ──────────────────────────────────────────
+  if [[ ! -d "${SCRIPT_DIR}/.git" ]]; then
+    error "Not a git installation (no .git/ directory in ${SCRIPT_DIR})."
+    info "Re-install with:"
+    info "  ${CYAN}bash <(curl -sL https://raw.githubusercontent.com/anthonyivn2/fmapi-codingagent-setup/main/install.sh)${RESET}"
+    exit 1
+  fi
+
+  # ── Fetch and check for updates ──────────────────────────────────────────
+  info "Checking for updates..."
+  if ! git -C "${SCRIPT_DIR}" fetch --quiet origin main 2>/dev/null; then
+    error "Failed to fetch from remote. Check your network connection."
+    exit 1
+  fi
+
+  local local_rev="" remote_rev=""
+  local_rev=$(git -C "${SCRIPT_DIR}" rev-parse HEAD)
+  remote_rev=$(git -C "${SCRIPT_DIR}" rev-parse origin/main)
+
+  if [[ "$local_rev" == "$remote_rev" ]]; then
+    success "Already up to date (${current_version})."
+    echo ""
+    exit 0
+  fi
+
+  # ── Show what's changing ─────────────────────────────────────────────────
+  local commit_count=""
+  commit_count=$(git -C "${SCRIPT_DIR}" rev-list --count HEAD..origin/main)
+  info "${commit_count} new commit(s) available."
+
+  # ── Pull updates ─────────────────────────────────────────────────────────
+  info "Updating..."
+  if ! git -C "${SCRIPT_DIR}" pull --quiet origin main 2>/dev/null; then
+    error "Failed to pull updates. You may have local changes."
+    info "Fix with: ${CYAN}cd ${SCRIPT_DIR} && git stash && git pull origin main${RESET}"
+    exit 1
+  fi
+
+  # ── Show new version ─────────────────────────────────────────────────────
+  local new_version="unknown"
+  if [[ -f "${SCRIPT_DIR}/VERSION" ]]; then
+    new_version=$(cat "${SCRIPT_DIR}/VERSION" | tr -d '[:space:]')
+  fi
+
+  success "Updated: ${current_version} → ${new_version}"
+  echo ""
 }
 
 do_doctor() {

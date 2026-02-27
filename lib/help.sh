@@ -20,6 +20,7 @@ Commands:
   --list-models         List all serving endpoints in the workspace
   --validate-models     Validate configured models exist and are ready
   --reinstall           Rerun setup using previously saved configuration
+  --self-update         Update to the latest version
   --uninstall           Remove FMAPI helper scripts and settings
   -h, --help            Show this help message
 
@@ -81,6 +82,9 @@ Examples:
   # Rerun setup with previous config (no prompts)
   bash setup-fmapi-claudecode.sh --reinstall
 
+  # Update to the latest version
+  bash setup-fmapi-claudecode.sh --self-update
+
   # Preview what setup would do (no changes made)
   bash setup-fmapi-claudecode.sh --dry-run --host https://my-workspace.cloud.databricks.com
 
@@ -103,6 +107,7 @@ Troubleshooting:
   Wrong workspace URL  URL must start with https:// and have no trailing slash
   Permission denied    Helper script needs execute permission (chmod 700)
   Model not found      Run: bash setup-fmapi-claudecode.sh --list-models
+  Update available     Run: bash setup-fmapi-claudecode.sh --self-update
   Unclear issue        Run: bash setup-fmapi-claudecode.sh --doctor
 HELPTEXT
   exit 0

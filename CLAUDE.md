@@ -8,6 +8,8 @@ This repo contains setup scripts and a Claude Code plugin that configure coding 
 
 ```
 setup-fmapi-claudecode.sh                          # Thin entry point: source libs, parse CLI, dispatch
+install.sh                                         # Bootstrap installer for bash <(curl ...) one-liner
+VERSION                                            # Version file (single line, e.g., 1.0.0)
 lib/
   core.sh                                          # Preamble, colors, logging, utilities, _install_hint
   help.sh                                          # show_help (help text)
@@ -53,7 +55,9 @@ The plugin is automatically registered in `~/.claude/plugins/installed_plugins.j
 
 ## Key Concepts
 
-- **`setup-fmapi-claudecode.sh`** — Thin entry point (~120 lines) that sources `lib/*.sh` modules, parses CLI flags, and dispatches to the appropriate command or setup flow. Supports `--status`, `--reauth`, `--doctor`, `--list-models`, `--validate-models`, `--uninstall`, `--config`, `--config-url`, and CLI flags for non-interactive setup. Passing `--host`, `--config`, or `--config-url` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
+- **`setup-fmapi-claudecode.sh`** — Thin entry point (~120 lines) that sources `lib/*.sh` modules, parses CLI flags, and dispatches to the appropriate command or setup flow. Supports `--status`, `--reauth`, `--doctor`, `--list-models`, `--validate-models`, `--self-update`, `--uninstall`, `--config`, `--config-url`, and CLI flags for non-interactive setup. Passing `--host`, `--config`, or `--config-url` enables non-interactive mode where all other flags auto-default (profile defaults to `fmapi-claudecode-profile`).
+- **`install.sh`** — Bootstrap installer for `bash <(curl ...)` one-liner. Clones the repo to `~/.fmapi-codingagent-setup/` (or `$FMAPI_HOME`). Idempotent: re-running updates an existing clone. Supports `--branch` for installing a specific branch or tag. Does not auto-run setup — prints next-step instructions only.
+- **`VERSION`** — Single-line file containing the current version (e.g., `1.0.0`). Read by `lib/core.sh` into the `FMAPI_VERSION` global. Falls back to `dev` if missing.
 - **`example-config.json`** — Example JSON config file showing all supported keys. Used with `--config` or hosted remotely for `--config-url` to enable reproducible, shareable team setups. Priority chain: CLI flags > config file > existing settings > hardcoded defaults.
 - **`.claude-plugin/plugin.json`** — Plugin manifest that registers the repo as a Claude Code plugin with the `skills/` directory.
 - **`skills/*/SKILL.md`** — Skill definitions that instruct Claude how to invoke the setup script with the appropriate flags.
@@ -66,11 +70,11 @@ The setup script is split into six sourced library modules under `lib/`. The ent
 
 | Module | Contents |
 |---|---|
-| `lib/core.sh` | Cleanup trap, ANSI colors, `_OS_TYPE`/`VERBOSITY`/`DRY_RUN` globals, logging (`info`, `success`, `error`, `debug`), utilities (`array_contains`, `require_cmd`, `_install_hint`, `prompt_value`, `select_option`) |
+| `lib/core.sh` | Cleanup trap, ANSI colors, `_OS_TYPE`/`VERBOSITY`/`DRY_RUN`/`FMAPI_VERSION` globals, logging (`info`, `success`, `error`, `debug`), utilities (`array_contains`, `require_cmd`, `_install_hint`, `prompt_value`, `select_option`) |
 | `lib/help.sh` | `show_help()` — static help text, no dependencies |
 | `lib/config.sh` | `discover_config()`, `_CONFIG_VALID_KEYS`, `load_config_file()`, `load_config_url()` |
 | `lib/shared.sh` | `_get_oauth_token()`, `_fetch_endpoints()`, `_validate_models_report()`, plus shared helpers: `_is_headless()`, `_require_fmapi_config()`, `_require_valid_oauth()` |
-| `lib/commands.sh` | `do_status()`, `do_reauth()`, `do_uninstall()`, `do_list_models()`, `do_validate_models()`, `do_doctor()` (with `_doctor_*` sub-functions) |
+| `lib/commands.sh` | `do_status()`, `do_reauth()`, `do_uninstall()`, `do_list_models()`, `do_validate_models()`, `do_self_update()`, `do_doctor()` (with `_doctor_*` sub-functions) |
 | `lib/setup.sh` | `gather_config()`, `install_dependencies()`, `authenticate()`, `write_settings()`, `write_helper()`, `register_plugin()`, `run_smoke_test()`, `print_summary()`, `print_dry_run_plan()`, `do_setup()` |
 
 Key shared helpers that deduplicate repeated patterns:
@@ -91,6 +95,7 @@ The global `SCRIPT_DIR` is computed once in the entry point and used by `write_h
 | `--list-models` | List all serving endpoints in the workspace |
 | `--validate-models` | Validate configured models exist and are ready |
 | `--reinstall` | Rerun setup using previously saved configuration |
+| `--self-update` | Update to the latest version (requires git clone installation) |
 | `--uninstall` | Remove all FMAPI artifacts and plugin registration |
 | `-h`, `--help` | Show help |
 | `--host URL` | Databricks workspace URL (enables non-interactive mode) |
@@ -157,6 +162,15 @@ There are no automated tests. To verify changes:
 28. Run `bash setup-fmapi-claudecode.sh --dry-run --status` — verify error about incompatible flags.
 29. Run `SSH_CONNECTION=x bash setup-fmapi-claudecode.sh --doctor` — verify headless info line in Auth section.
 30. Run `bash setup-fmapi-claudecode.sh --dry-run` (no --host) — verify error about missing host (non-interactive mode).
+31. Run `bash setup-fmapi-claudecode.sh --self-update` — verify it fetches, checks, and reports up-to-date or pulls.
+32. Run `bash setup-fmapi-claudecode.sh --dry-run --self-update` — verify error about incompatible flags.
+33. Run `bash setup-fmapi-claudecode.sh --status` — verify version number appears in output.
+34. Run `bash setup-fmapi-claudecode.sh --doctor` — verify version appears in Dependencies section.
+35. Run `bash install.sh` locally — verify it clones to `~/.fmapi-codingagent-setup/` and prints next steps.
+36. Re-run `bash install.sh` — verify it updates the existing clone (idempotent).
+37. Run `bash install.sh --branch v1.0.0` — verify it installs a specific tag.
+38. Run `FMAPI_HOME=/tmp/test bash install.sh` — verify it installs to custom location.
+39. Run `bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --self-update` — verify it works from installed location.
 
 ## Abbreviations
 
