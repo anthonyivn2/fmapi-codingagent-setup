@@ -75,6 +75,7 @@ gather_config_pre_auth() {
       cwd)  SETTINGS_BASE="$(cd "$(pwd)" && pwd)" ;;
       *)
         resolved_settings_location="${resolved_settings_location/#\~/$HOME}"
+        _validate_settings_path "$resolved_settings_location"
         mkdir -p "$resolved_settings_location"
         SETTINGS_BASE="$(cd "$resolved_settings_location" && pwd)"
         ;;
@@ -102,6 +103,7 @@ gather_config_pre_auth() {
           exit 1
         fi
         CUSTOM_PATH="${CUSTOM_PATH/#\~/$HOME}"
+        _validate_settings_path "$CUSTOM_PATH"
         mkdir -p "$CUSTOM_PATH"
         SETTINGS_BASE="$(cd "$CUSTOM_PATH" && pwd)"
         ;;
@@ -136,9 +138,9 @@ install_dependencies() {
         info "Installing Homebrew ..."
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         if [[ -x /opt/homebrew/bin/brew ]]; then
-          eval "$(/opt/homebrew/bin/brew shellenv)"
+          export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
         elif [[ -x /usr/local/bin/brew ]]; then
-          eval "$(/usr/local/bin/brew shellenv)"
+          export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
         fi
         success "Homebrew installed."
       fi

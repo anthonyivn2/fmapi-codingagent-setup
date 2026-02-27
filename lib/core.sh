@@ -50,6 +50,16 @@ array_contains() {
   return 1
 }
 
+# Reject dangerous base paths for settings file placement.
+_validate_settings_path() {
+  local p="$1"
+  case "$p" in
+    /|/bin|/sbin|/usr|/usr/*|/etc|/etc/*|/var|/tmp|/dev|/proc|/sys)
+      error "Refusing to use system path as settings location: $p"
+      exit 1 ;;
+  esac
+}
+
 # Require a command or exit with an error message
 require_cmd() {
   local cmd="$1" msg="$2"

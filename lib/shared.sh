@@ -11,7 +11,7 @@ _get_oauth_token() {
   local tok=""
   tok=$(databricks auth token --profile "$profile" --output json 2>/dev/null \
     | jq -r '.access_token // empty') || true
-  [[ -n "$tok" ]] && { echo "$tok"; return 0; }
+  if [[ -n "$tok" ]]; then echo "$tok"; return 0; fi
   return 1
 }
 

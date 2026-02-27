@@ -18,7 +18,7 @@ error()   { echo -e "\n  ${RED}${BOLD}!! ERROR${RESET}${RED} $1${RESET}\n" >&2; 
 # ── Parse flags ──────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --branch) BRANCH="${2:-}"; [[ -z "$BRANCH" ]] && { error "--branch requires a value."; exit 1; }; shift 2 ;;
+    --branch) BRANCH="${2:-}"; if [[ -z "$BRANCH" ]]; then error "--branch requires a value."; exit 1; fi; shift 2 ;;
     -h|--help)
       echo "Usage: bash <(curl -sL .../install.sh) [OPTIONS]"
       echo ""

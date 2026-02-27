@@ -51,16 +51,16 @@ while [[ $# -gt 0 ]]; do
     --verbose)      VERBOSITY=2; shift ;;
     --quiet|-q)     VERBOSITY=0; shift ;;
     --dry-run)      DRY_RUN=true; shift ;;
-    --host)         CLI_HOST="${2:-}"; [[ -z "$CLI_HOST" ]] && { error "--host requires a URL."; exit 1; }; shift 2 ;;
-    --profile)      CLI_PROFILE="${2:-}"; [[ -z "$CLI_PROFILE" ]] && { error "--profile requires a name."; exit 1; }; shift 2 ;;
-    --model)        CLI_MODEL="${2:-}"; [[ -z "$CLI_MODEL" ]] && { error "--model requires a value."; exit 1; }; shift 2 ;;
-    --opus)         CLI_OPUS="${2:-}"; [[ -z "$CLI_OPUS" ]] && { error "--opus requires a value."; exit 1; }; shift 2 ;;
-    --sonnet)       CLI_SONNET="${2:-}"; [[ -z "$CLI_SONNET" ]] && { error "--sonnet requires a value."; exit 1; }; shift 2 ;;
-    --haiku)        CLI_HAIKU="${2:-}"; [[ -z "$CLI_HAIKU" ]] && { error "--haiku requires a value."; exit 1; }; shift 2 ;;
-    --ttl)          CLI_TTL="${2:-}"; [[ -z "$CLI_TTL" ]] && { error "--ttl requires a value."; exit 1; }; shift 2 ;;
-    --settings-location) CLI_SETTINGS_LOCATION="${2:-}"; [[ -z "$CLI_SETTINGS_LOCATION" ]] && { error "--settings-location requires a value."; exit 1; }; shift 2 ;;
-    --config)       CLI_CONFIG_FILE="${2:-}"; [[ -z "$CLI_CONFIG_FILE" ]] && { error "--config requires a file path."; exit 1; }; shift 2 ;;
-    --config-url)   CLI_CONFIG_URL="${2:-}"; [[ -z "$CLI_CONFIG_URL" ]] && { error "--config-url requires a URL."; exit 1; }; shift 2 ;;
+    --host)         CLI_HOST="${2:-}"; if [[ -z "$CLI_HOST" ]]; then error "--host requires a URL."; exit 1; fi; shift 2 ;;
+    --profile)      CLI_PROFILE="${2:-}"; if [[ -z "$CLI_PROFILE" ]]; then error "--profile requires a name."; exit 1; fi; shift 2 ;;
+    --model)        CLI_MODEL="${2:-}"; if [[ -z "$CLI_MODEL" ]]; then error "--model requires a value."; exit 1; fi; shift 2 ;;
+    --opus)         CLI_OPUS="${2:-}"; if [[ -z "$CLI_OPUS" ]]; then error "--opus requires a value."; exit 1; fi; shift 2 ;;
+    --sonnet)       CLI_SONNET="${2:-}"; if [[ -z "$CLI_SONNET" ]]; then error "--sonnet requires a value."; exit 1; fi; shift 2 ;;
+    --haiku)        CLI_HAIKU="${2:-}"; if [[ -z "$CLI_HAIKU" ]]; then error "--haiku requires a value."; exit 1; fi; shift 2 ;;
+    --ttl)          CLI_TTL="${2:-}"; if [[ -z "$CLI_TTL" ]]; then error "--ttl requires a value."; exit 1; fi; shift 2 ;;
+    --settings-location) CLI_SETTINGS_LOCATION="${2:-}"; if [[ -z "$CLI_SETTINGS_LOCATION" ]]; then error "--settings-location requires a value."; exit 1; fi; shift 2 ;;
+    --config)       CLI_CONFIG_FILE="${2:-}"; if [[ -z "$CLI_CONFIG_FILE" ]]; then error "--config requires a file path."; exit 1; fi; shift 2 ;;
+    --config-url)   CLI_CONFIG_URL="${2:-}"; if [[ -z "$CLI_CONFIG_URL" ]]; then error "--config-url requires a URL."; exit 1; fi; shift 2 ;;
     *)              error "Unknown option: $1"; echo "  Run with --help for usage." >&2; exit 1 ;;
   esac
 done

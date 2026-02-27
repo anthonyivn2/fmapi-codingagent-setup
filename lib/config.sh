@@ -29,9 +29,9 @@ discover_config() {
     # Parse helper script for FMAPI_* variables (supports both FMAPI_* and legacy names)
     if [[ -f "$helper" ]]; then
       CFG_PROFILE=$(sed -n 's/^FMAPI_PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
-      [[ -z "$CFG_PROFILE" ]] && { CFG_PROFILE=$(sed -n 's/^PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
+      if [[ -z "$CFG_PROFILE" ]]; then CFG_PROFILE=$(sed -n 's/^PROFILE="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; fi
       CFG_HOST=$(sed -n 's/^FMAPI_HOST="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true
-      [[ -z "$CFG_HOST" ]] && { CFG_HOST=$(sed -n 's/^HOST="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; }
+      if [[ -z "$CFG_HOST" ]]; then CFG_HOST=$(sed -n 's/^HOST="\(.*\)"/\1/p' "$helper" 2>/dev/null | head -1) || true; fi
     fi
 
     # Parse model names from settings.json env block
