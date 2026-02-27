@@ -263,6 +263,36 @@ write_settings() {
   success "Settings written to ${SETTINGS_FILE}."
 }
 
+ensure_onboarding() {
+  local claude_json="$HOME/.claude.json"
+
+  # Check if hasCompletedOnboarding is already true
+  if [[ -f "$claude_json" ]]; then
+    local current=""
+    current=$(jq -r '.hasCompletedOnboarding // empty' "$claude_json" 2>/dev/null) || true
+    if [[ "$current" == "true" ]]; then
+      debug "ensure_onboarding: already set in ${claude_json}"
+      return 0
+    fi
+  fi
+
+  [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}Onboarding flag${RESET}"
+
+  if [[ -f "$claude_json" ]]; then
+    local tmpfile=""
+    tmpfile=$(mktemp "${claude_json}.XXXXXX")
+    _CLEANUP_FILES+=("$tmpfile")
+    jq '.hasCompletedOnboarding = true' "$claude_json" > "$tmpfile"
+    chmod 600 "$tmpfile"
+    mv "$tmpfile" "$claude_json"
+  else
+    echo '{"hasCompletedOnboarding":true}' | jq '.' > "$claude_json"
+    chmod 600 "$claude_json"
+  fi
+  debug "ensure_onboarding: set hasCompletedOnboarding=true in ${claude_json}"
+  success "Onboarding flag set in ${claude_json}."
+}
+
 write_helper() {
   [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}API key helper${RESET}"
 
@@ -505,6 +535,22 @@ print_dry_run_plan() {
   echo -e "       CLAUDE_CODE_API_KEY_HELPER_TTL_MS=${BOLD}${FMAPI_TTL_MS}${RESET}"
   echo ""
 
+  # Onboarding
+  echo -e "  ${BOLD}Onboarding${RESET}"
+  local claude_json="$HOME/.claude.json"
+  local onboarding_done=false
+  if [[ -f "$claude_json" ]]; then
+    local ob_val=""
+    ob_val=$(jq -r '.hasCompletedOnboarding // empty' "$claude_json" 2>/dev/null) || true
+    [[ "$ob_val" == "true" ]] && onboarding_done=true
+  fi
+  if [[ "$onboarding_done" == true ]]; then
+    echo -e "  ${GREEN}${BOLD}ok${RESET}  hasCompletedOnboarding already set in ${DIM}${claude_json}${RESET}"
+  else
+    echo -e "  ${CYAN}::${RESET}  Would set hasCompletedOnboarding=true in ${DIM}${claude_json}${RESET}"
+  fi
+  echo ""
+
   # Helper
   echo -e "  ${BOLD}Helper script${RESET}"
   echo -e "  ${CYAN}::${RESET}  Path: ${BOLD}${HELPER_FILE}${RESET}"
@@ -544,6 +590,7 @@ do_setup() {
   install_dependencies
   authenticate
   write_settings
+  ensure_onboarding
   write_helper
   register_plugin
   run_smoke_test

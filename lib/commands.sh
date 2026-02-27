@@ -392,6 +392,22 @@ _doctor_configuration() {
     config_ok=false
   fi
 
+  # Onboarding flag in ~/.claude.json
+  local claude_json="$HOME/.claude.json"
+  if [[ -f "$claude_json" ]]; then
+    local ob_val=""
+    ob_val=$(jq -r '.hasCompletedOnboarding // empty' "$claude_json" 2>/dev/null) || true
+    if [[ "$ob_val" == "true" ]]; then
+      echo -e "  ${GREEN}${BOLD}PASS${RESET}  hasCompletedOnboarding is set  ${DIM}${claude_json}${RESET}"
+    else
+      echo -e "  ${RED}${BOLD}FAIL${RESET}  hasCompletedOnboarding not set  ${DIM}Fix: re-run setup or add to ${claude_json}${RESET}"
+      config_ok=false
+    fi
+  else
+    echo -e "  ${RED}${BOLD}FAIL${RESET}  ${claude_json} not found  ${DIM}Fix: re-run setup${RESET}"
+    config_ok=false
+  fi
+
   # Helper script exists and is executable
   if [[ -n "$CFG_HELPER_FILE" && -f "$CFG_HELPER_FILE" ]]; then
     if [[ -x "$CFG_HELPER_FILE" ]]; then
