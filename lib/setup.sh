@@ -24,7 +24,7 @@ gather_config_pre_auth() {
   local default_host default_profile default_ttl
   default_host=$(_default "$CLI_HOST" "$FILE_HOST" "$CFG_HOST" "")
   default_profile=$(_default "$CLI_PROFILE" "$FILE_PROFILE" "$CFG_PROFILE" "fmapi-claudecode-profile")
-  default_ttl=$(_default "$CLI_TTL" "$FILE_TTL" "$CFG_TTL" "30")
+  default_ttl=$(_default "$CLI_TTL" "$FILE_TTL" "$CFG_TTL" "5")
 
   # Store model defaults as globals for gather_config_models()
   _DEFAULT_MODEL=$(_default "$CLI_MODEL" "$FILE_MODEL" "$CFG_MODEL" "databricks-claude-opus-4-6")

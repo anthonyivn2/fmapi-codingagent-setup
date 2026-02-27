@@ -106,7 +106,7 @@ The global `SCRIPT_DIR` is computed once in the entry point and used by `write_h
 | `--opus MODEL` | Opus model (default: `databricks-claude-opus-4-6`) |
 | `--sonnet MODEL` | Sonnet model (default: `databricks-claude-sonnet-4-6`) |
 | `--haiku MODEL` | Haiku model (default: `databricks-claude-haiku-4-5`) |
-| `--ttl MINUTES` | Token refresh interval in minutes (default: `30`, max: `60`) |
+| `--ttl MINUTES` | Token refresh interval in minutes (default: `5`, max: `60`) |
 | `--settings-location PATH` | Settings location: `home`, `cwd`, or custom path (default: `home`) |
 | `--config PATH` | Load configuration from a local JSON file |
 | `--config-url URL` | Load configuration from a remote JSON URL (HTTPS only) |
