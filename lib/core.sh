@@ -34,6 +34,7 @@ fi
 
 info()    { [[ "$VERBOSITY" -ge 1 ]] && echo -e "  ${CYAN}::${RESET} $1" || true; }
 success() { [[ "$VERBOSITY" -ge 1 ]] && echo -e "  ${GREEN}${BOLD}ok${RESET} $1" || true; }
+warn()    { [[ "$VERBOSITY" -ge 1 ]] && echo -e "  ${YELLOW}${BOLD}⚠ ${RESET}${YELLOW}$1${RESET}" || true; }
 error()   { echo -e "\n  ${RED}${BOLD}!! ERROR${RESET}${RED} $1${RESET}\n" >&2; }
 debug()   { [[ "$VERBOSITY" -ge 2 ]] && echo -e "  ${DIM}[debug]${RESET} $1" || true; }
 
