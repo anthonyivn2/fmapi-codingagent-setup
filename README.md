@@ -4,6 +4,8 @@ Databricks serves frontier and open-source LLMs through its [Foundation Model AP
 
 > *If you are wondering, yes, this repo was built by coding agents powered by LLMs in Databricks Foundation Model API. We like to dogfood our own products.*
 
+**Status: Experimental** — Currently handles FMAPI setup for coding agents. Considering expanding to cover AI Gateway policies, inference table configuration, and OTEL telemetry ingestion via [Databricks Zerobus](https://docs.databricks.com/aws/en/ingestion/zerobus-overview). Feedback and ideas are welcomed — open an issue or reach out!
+
 ## What You Get
 
 - **Leverage Popular Coding Agents against models hosted in your Databricks workspace** &mdash; route all API calls through Databricks Foundation Model API
