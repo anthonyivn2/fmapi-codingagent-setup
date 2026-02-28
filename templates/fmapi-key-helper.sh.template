@@ -24,7 +24,6 @@ token=$(_fetch_token) || true
 
 # Retry once after a short delay for transient failures (network blip, CLI lock)
 if [ -z "$token" ]; then
-  echo "FMAPI: Token fetch failed for profile '$FMAPI_PROFILE', retrying ..." >&2
   sleep 2
   token=$(_fetch_token) || true
 fi
@@ -50,30 +49,19 @@ if _is_headless; then
   exit 1
 fi
 
-if [ -e /dev/tty ]; then
-  _out="/dev/tty"
-else
-  _out="/dev/stderr"
-fi
-
-echo "FMAPI: OAuth session expired — attempting re-authentication ..." > "$_out"
-
 # Use timeout if available (standard on Linux, may not exist on macOS)
 if command -v timeout >/dev/null 2>&1; then
-  _reauth_ok=false; timeout 30 databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" > "$_out" 2>&1 && _reauth_ok=true
+  _reauth_ok=false; timeout 30 databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" >/dev/null 2>&1 && _reauth_ok=true
 else
-  _reauth_ok=false; databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" > "$_out" 2>&1 && _reauth_ok=true
+  _reauth_ok=false; databricks auth login --host "$FMAPI_HOST" --profile "$FMAPI_PROFILE" >/dev/null 2>&1 && _reauth_ok=true
 fi
 if [ "$_reauth_ok" = true ]; then
   token=$(_fetch_token) || true
   if [ -n "$token" ]; then
-    echo "FMAPI: Re-authentication successful." > "$_out"
     echo "$token"
     exit 0
   fi
 fi
 
-echo "FMAPI: Re-authentication failed. Run one of the following:" >&2
-echo "FMAPI:   bash __SETUP_SCRIPT__ --reauth" >&2
-echo "FMAPI:   databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" >&2
+echo "FMAPI: OAuth session expired. Run: databricks auth login --host $FMAPI_HOST --profile $FMAPI_PROFILE" >&2
 exit 1
