@@ -75,9 +75,9 @@ The setup script is split into six sourced library modules under `lib/`. The ent
 | `lib/core.sh` | Cleanup trap, ANSI colors, `_OS_TYPE`/`_IS_WSL`/`_WSL_VERSION`/`VERBOSITY`/`DRY_RUN`/`FMAPI_VERSION` globals, logging (`info`, `success`, `error`, `debug`), utilities (`array_contains`, `require_cmd`, `_install_hint`, `prompt_value`, `select_option`) |
 | `lib/help.sh` | `show_help()` — static help text, no dependencies |
 | `lib/config.sh` | `discover_config()`, `_CONFIG_VALID_KEYS`, `load_config_file()`, `load_config_url()` |
-| `lib/shared.sh` | `_get_oauth_token()`, `_fetch_endpoints()`, `_validate_models_report()`, plus shared helpers: `_is_headless()`, `_require_fmapi_config()`, `_require_valid_oauth()` |
+| `lib/shared.sh` | `_get_oauth_token()`, `_detect_workspace_id()`, `_build_base_url()`, `_fetch_endpoints()`, `_validate_models_report()`, plus shared helpers: `_is_headless()`, `_require_fmapi_config()`, `_require_valid_oauth()` |
 | `lib/commands.sh` | `do_status()`, `do_reauth()`, `do_uninstall()`, `do_list_models()`, `do_validate_models()`, `do_self_update()`, `do_doctor()` (with `_doctor_*` sub-functions) |
-| `lib/setup.sh` | `gather_config_pre_auth()`, `gather_config_models()`, `install_dependencies()`, `authenticate()`, `write_settings()`, `ensure_onboarding()`, `write_helper()`, `register_plugin()`, `run_smoke_test()`, `print_summary()`, `print_dry_run_plan()`, `do_setup()` |
+| `lib/setup.sh` | `gather_config_pre_auth()`, `gather_config_models()`, `install_dependencies()`, `authenticate()`, `resolve_workspace_id()`, `write_settings()`, `ensure_onboarding()`, `write_helper()`, `register_plugin()`, `run_smoke_test()`, `print_summary()`, `print_dry_run_plan()`, `do_setup()` |
 
 Key shared helpers that deduplicate repeated patterns:
 - **`_install_hint(cmd)`** — Platform-appropriate install hint for any dependency (jq, databricks, claude, curl)
@@ -108,6 +108,8 @@ The global `SCRIPT_DIR` is computed once in the entry point and used by `write_h
 | `--haiku MODEL` | Haiku model (default: `databricks-claude-haiku-4-5`) |
 | `--ttl MINUTES` | Token refresh interval in minutes (default: `60`, max: `60`, 60 recommended) |
 | `--settings-location PATH` | Settings location: `home`, `cwd`, or custom path (default: `home`) |
+| `--ai-gateway` | Use AI Gateway v2 for API routing (beta, default: off) |
+| `--workspace-id ID` | Databricks workspace ID for AI Gateway (auto-detected if omitted) |
 | `--config PATH` | Load configuration from a local JSON file |
 | `--config-url URL` | Load configuration from a remote JSON URL (HTTPS only) |
 | `--verbose` | Show debug-level output |
@@ -173,9 +175,17 @@ There are no automated tests. To verify changes:
 37. Run `bash install.sh --branch v1.0.0` — verify it installs a specific tag.
 38. Run `FMAPI_HOME=/tmp/test bash install.sh` — verify it installs to custom location.
 39. Run `bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --self-update` — verify it works from installed location.
-40. Run on WSL — verify `_IS_WSL` is `true` and `_WSL_VERSION` is detected correctly.
-41. Run `--doctor` on WSL — verify Environment section shows WSL version, distro, and "(experimental)".
-42. On WSL without `wslu` or `xdg-open`, run setup — verify browser opener warning appears.
+40. Run `bash setup-fmapi-claudecode.sh --dry-run --host https://... --ai-gateway` — verify gateway routing with `<to be detected>` workspace ID.
+41. Run `bash setup-fmapi-claudecode.sh --dry-run --host https://... --ai-gateway --workspace-id 123456` — verify gateway routing with explicit ID.
+42. Run `bash setup-fmapi-claudecode.sh --workspace-id 123` (no --ai-gateway) — should error.
+43. Run `bash setup-fmapi-claudecode.sh --workspace-id abc --ai-gateway` — should error (non-numeric).
+44. Run `bash setup-fmapi-claudecode.sh --status` on a gateway config — verify routing mode, workspace ID, and base URL appear.
+45. Run `bash setup-fmapi-claudecode.sh --doctor` on a gateway config — verify gateway connectivity check.
+46. Run `bash setup-fmapi-claudecode.sh --reinstall` on a gateway config — should preserve gateway settings.
+47. Run `bash setup-fmapi-claudecode.sh --config example-config.json` — verify `ai_gateway` and `workspace_id` keys accepted.
+48. Run on WSL — verify `_IS_WSL` is `true` and `_WSL_VERSION` is detected correctly.
+49. Run `--doctor` on WSL — verify Environment section shows WSL version, distro, and "(experimental)".
+50. On WSL without `wslu` or `xdg-open`, run setup — verify browser opener warning appears.
 
 ## Abbreviations
 

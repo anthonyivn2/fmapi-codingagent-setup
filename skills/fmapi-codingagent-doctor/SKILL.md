@@ -24,7 +24,7 @@ bash "<install-path>/setup-fmapi-claudecode.sh" --doctor
    - **Configuration** — Verifies settings file is valid JSON, all required FMAPI keys are present, and helper script exists and is executable
    - **Profile** — Confirms the Databricks CLI profile exists in `~/.databrickscfg`
    - **Auth** — Tests whether the OAuth token is valid
-   - **Connectivity** — Tests HTTP reachability to the Databricks serving endpoints API
+   - **Connectivity** — Tests HTTP reachability to the Databricks serving endpoints API. When AI Gateway v2 is configured, also tests gateway endpoint reachability.
    - **Models** — Validates all four configured model names exist and are ready
 
 4. Each check shows **PASS**, **FAIL**, **WARN**, or **SKIP** with an actionable fix suggestion for failures.

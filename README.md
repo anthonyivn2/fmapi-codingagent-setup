@@ -297,6 +297,26 @@ bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh \
 
 Override any default with additional flags &mdash; see [CLI Reference](#cli-reference) for the full list.
 
+#### AI Gateway v2 (Beta)
+
+Route API calls through Databricks AI Gateway v2 instead of the default serving endpoints. AI Gateway v2 uses a dedicated endpoint format (`https://<workspace-id>.ai-gateway.cloud.databricks.com/anthropic`) and may offer additional gateway features.
+
+```bash
+# Auto-detect workspace ID
+bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh \
+  --host https://my-workspace.cloud.databricks.com --ai-gateway
+
+# Explicit workspace ID
+bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh \
+  --host https://my-workspace.cloud.databricks.com --ai-gateway --workspace-id 1234567890
+```
+
+In interactive mode, the script prompts you to choose between "Serving Endpoints (default)" and "AI Gateway v2 (beta)". When AI Gateway is selected, the workspace ID is auto-detected from the Databricks API. If auto-detection fails, you are prompted to enter it manually (or use `--workspace-id` in non-interactive mode).
+
+The `--ai-gateway` flag can also be set via config files using the `"ai_gateway": true` key alongside an optional `"workspace_id"` value. See [`example-config.json`](example-config.json).
+
+**Note:** AI Gateway v2 is in beta. OAuth token management (`apiKeyHelper`) works the same way &mdash; only the base URL changes.
+
 #### Config File Setup
 
 Load configuration from a JSON file instead of passing individual flags. Useful for teams standardizing setup across users.
@@ -341,6 +361,8 @@ Setup options (skip interactive prompts):
   --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
   --ttl MINUTES         Token refresh interval in minutes (default: 60, max: 60, 60 recommended)
   --settings-location   Where to write settings: "home", "cwd", or path (default: home)
+  --ai-gateway          Use AI Gateway v2 for API routing (beta, default: off)
+  --workspace-id ID     Databricks workspace ID for AI Gateway (auto-detected if omitted)
 
 Config file options:
   --config PATH         Load configuration from a local JSON file

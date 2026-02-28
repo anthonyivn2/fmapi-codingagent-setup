@@ -33,6 +33,8 @@ Setup options (skip interactive prompts):
   --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
   --ttl MINUTES         Token refresh interval in minutes (default: 60, max: 60, 60 recommended)
   --settings-location   Where to write settings: "home", "cwd", or path (default: home)
+  --ai-gateway          Use AI Gateway v2 for API routing (beta, default: off)
+  --workspace-id ID     Databricks workspace ID for AI Gateway (auto-detected if omitted)
 
 Config file options:
   --config PATH         Load configuration from a local JSON file
@@ -63,6 +65,13 @@ Examples:
 
   # Config file with CLI overrides
   bash setup-fmapi-claudecode.sh --config ./my-config.json --model databricks-claude-sonnet-4-6
+
+  # Non-interactive with AI Gateway v2 (auto-detects workspace ID)
+  bash setup-fmapi-claudecode.sh --host https://my-workspace.cloud.databricks.com --ai-gateway
+
+  # Non-interactive with AI Gateway v2 and explicit workspace ID
+  bash setup-fmapi-claudecode.sh --host https://my-workspace.cloud.databricks.com \
+    --ai-gateway --workspace-id 1234567890
 
   # Check configuration health
   bash setup-fmapi-claudecode.sh --status

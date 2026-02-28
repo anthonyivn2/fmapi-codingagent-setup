@@ -33,6 +33,15 @@ do_status() {
   if [[ -n "$CFG_TTL" ]]; then
     echo -e "  ${DIM}TTL${RESET}        ${BOLD}${CFG_TTL}m${RESET}"
   fi
+  if [[ "${CFG_AI_GATEWAY:-}" == "true" ]]; then
+    echo -e "  ${DIM}Routing${RESET}    ${BOLD}AI Gateway v2 (beta)${RESET}"
+    echo -e "  ${DIM}Workspace ID${RESET} ${BOLD}${CFG_WORKSPACE_ID:-unknown}${RESET}"
+    local status_base_url=""
+    status_base_url=$(_build_base_url "${CFG_HOST}" "true" "${CFG_WORKSPACE_ID:-}")
+    echo -e "  ${DIM}Base URL${RESET}   ${BOLD}${status_base_url}${RESET}"
+  else
+    echo -e "  ${DIM}Routing${RESET}    ${BOLD}Serving Endpoints (v1)${RESET}"
+  fi
   echo ""
 
   # ── Auth ─────────────────────────────────────────────────────────────────
@@ -413,6 +422,13 @@ _doctor_configuration() {
     config_ok=false
   fi
 
+  # Routing mode
+  if [[ "${CFG_AI_GATEWAY:-}" == "true" ]]; then
+    echo -e "  ${DIM}INFO${RESET}  Routing: AI Gateway v2 (beta), workspace ID: ${CFG_WORKSPACE_ID:-unknown}"
+  else
+    echo -e "  ${DIM}INFO${RESET}  Routing: Serving Endpoints (v1)"
+  fi
+
   # Onboarding flag in ~/.claude.json
   local claude_json="$HOME/.claude.json"
   if [[ -f "$claude_json" ]]; then
@@ -510,6 +526,21 @@ _doctor_connectivity() {
       else
         echo -e "  ${RED}${BOLD}FAIL${RESET}  Cannot reach Databricks API  ${DIM}Fix: check network and ${CFG_HOST}${RESET}"
         conn_ok=false
+      fi
+
+      # Gateway connectivity check
+      if [[ "${CFG_AI_GATEWAY:-}" == "true" ]] && [[ -n "${CFG_WORKSPACE_ID:-}" ]]; then
+        local gw_url="https://${CFG_WORKSPACE_ID}.ai-gateway.cloud.databricks.com/anthropic/v1/messages"
+        local gw_code=""
+        gw_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+          -H "Authorization: Bearer ${oauth_tok}" \
+          "$gw_url" 2>/dev/null) || true
+        if [[ -n "$gw_code" && "$gw_code" != "000" ]]; then
+          echo -e "  ${GREEN}${BOLD}PASS${RESET}  AI Gateway v2 reachable  ${DIM}(HTTP ${gw_code})${RESET}"
+        else
+          echo -e "  ${RED}${BOLD}FAIL${RESET}  Cannot reach AI Gateway v2  ${DIM}Fix: check workspace ID and network${RESET}"
+          conn_ok=false
+        fi
       fi
     fi
   fi

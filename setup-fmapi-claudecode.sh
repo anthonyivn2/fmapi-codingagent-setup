@@ -33,6 +33,7 @@ source "${SCRIPT_DIR}/lib/setup.sh"
 CLI_HOST="" CLI_PROFILE="" CLI_MODEL="" CLI_OPUS="" CLI_SONNET="" CLI_HAIKU=""
 CLI_TTL=""
 CLI_SETTINGS_LOCATION=""
+CLI_AI_GATEWAY="" CLI_WORKSPACE_ID=""
 CLI_CONFIG_FILE="" CLI_CONFIG_URL=""
 ACTION=""
 
@@ -61,6 +62,8 @@ while [[ $# -gt 0 ]]; do
     --settings-location) CLI_SETTINGS_LOCATION="${2:-}"; if [[ -z "$CLI_SETTINGS_LOCATION" ]]; then error "--settings-location requires a value."; exit 1; fi; shift 2 ;;
     --config)       CLI_CONFIG_FILE="${2:-}"; if [[ -z "$CLI_CONFIG_FILE" ]]; then error "--config requires a file path."; exit 1; fi; shift 2 ;;
     --config-url)   CLI_CONFIG_URL="${2:-}"; if [[ -z "$CLI_CONFIG_URL" ]]; then error "--config-url requires a URL."; exit 1; fi; shift 2 ;;
+    --ai-gateway)   CLI_AI_GATEWAY="true"; shift ;;
+    --workspace-id) CLI_WORKSPACE_ID="${2:-}"; if [[ -z "$CLI_WORKSPACE_ID" ]]; then error "--workspace-id requires a value."; exit 1; fi; shift 2 ;;
     *)              error "Unknown option: $1"; echo "  Run with --help for usage." >&2; exit 1 ;;
   esac
 done
@@ -77,9 +80,22 @@ if [[ "$DRY_RUN" == true ]] && [[ -n "$ACTION" ]]; then
   exit 1
 fi
 
+# ── --workspace-id validation ────────────────────────────────────────────────
+if [[ -n "$CLI_WORKSPACE_ID" ]]; then
+  if ! [[ "$CLI_WORKSPACE_ID" =~ ^[0-9]+$ ]]; then
+    error "--workspace-id must be numeric. Got: $CLI_WORKSPACE_ID"
+    exit 1
+  fi
+  if [[ -z "$CLI_AI_GATEWAY" ]]; then
+    error "--workspace-id requires --ai-gateway to be set."
+    exit 1
+  fi
+fi
+
 # ── Config file loading ──────────────────────────────────────────────────────
 FILE_HOST="" FILE_PROFILE="" FILE_MODEL="" FILE_OPUS="" FILE_SONNET="" FILE_HAIKU=""
 FILE_TTL="" FILE_SETTINGS_LOCATION=""
+FILE_AI_GATEWAY="" FILE_WORKSPACE_ID=""
 
 if [[ -n "$CLI_CONFIG_FILE" ]] || [[ -n "$CLI_CONFIG_URL" ]]; then
   require_cmd jq "jq is required to parse config files. Install with: $(_install_hint jq)"
@@ -106,6 +122,9 @@ if [[ "${ACTION}" == "reinstall" ]]; then
   fi
   info "Re-installing with existing config (${CFG_HOST}, profile: ${CFG_PROFILE:-fmapi-claudecode-profile})"
   NON_INTERACTIVE=true
+  # Propagate gateway config from discovered config
+  [[ -z "$CLI_AI_GATEWAY" ]] && CLI_AI_GATEWAY="${CFG_AI_GATEWAY:-false}"
+  [[ -z "$CLI_WORKSPACE_ID" ]] && CLI_WORKSPACE_ID="${CFG_WORKSPACE_ID:-}"
 fi
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────

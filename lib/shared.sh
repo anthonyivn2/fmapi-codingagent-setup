@@ -15,6 +15,43 @@ _get_oauth_token() {
   return 1
 }
 
+# Detect the workspace ID from the x-databricks-org-id response header.
+# Args: profile host
+# Prints the numeric workspace ID on stdout, returns 1 on failure.
+_detect_workspace_id() {
+  local profile="${1:-}" host="${2:-}"
+  [[ -z "$profile" || -z "$host" ]] && return 1
+
+  local tok=""
+  tok=$(_get_oauth_token "$profile") || return 1
+
+  local headers=""
+  headers=$(curl -s -D- -o /dev/null --max-time 10 \
+    -H "Authorization: Bearer ${tok}" \
+    "${host}/api/2.0/clusters/spark-versions" 2>/dev/null) || return 1
+
+  local ws_id=""
+  ws_id=$(echo "$headers" | sed -n 's/^[Xx]-[Dd]atabricks-[Oo]rg-[Ii]d: *\([0-9]*\).*/\1/p' | head -1) || true
+
+  if [[ -n "$ws_id" ]]; then
+    echo "$ws_id"
+    return 0
+  fi
+  return 1
+}
+
+# Build the Anthropic base URL.
+# Args: host gateway_enabled workspace_id
+# Returns the gateway URL when enabled, otherwise the serving-endpoints URL.
+_build_base_url() {
+  local host="${1:-}" gateway_enabled="${2:-false}" workspace_id="${3:-}"
+  if [[ "$gateway_enabled" == "true" ]] && [[ -n "$workspace_id" ]]; then
+    echo "https://${workspace_id}.ai-gateway.cloud.databricks.com/anthropic"
+  else
+    echo "${host}/serving-endpoints/anthropic"
+  fi
+}
+
 # Fetch all serving endpoints into _ENDPOINTS_JSON.
 # Requires databricks CLI and a valid profile. Returns 1 on failure.
 _ENDPOINTS_JSON=""
@@ -108,12 +145,12 @@ _display_claude_endpoints() {
   local hdr_name hdr_state
   hdr_name=$(printf "%-${col_w}s" "ENDPOINT NAME")
   hdr_state=$(printf "%-${state_w}s" "STATE")
-  echo -e "     ${BOLD}${hdr_name}${RESET} ${BOLD}${hdr_state}${RESET} ${BOLD}TYPE${RESET}"
-  echo -e "  ${DIM}$(printf '%.0s─' {1..70})${RESET}"
+  echo -e "     ${BOLD}${hdr_name}${RESET} ${BOLD}${hdr_state}${RESET}"
+  echo -e "  ${DIM}$(printf '%.0s─' {1..58})${RESET}"
 
   # Print each endpoint — pad plain text first, then wrap with color to keep columns aligned
-  echo "$filtered" | jq -r '.[] | [.name, (.state.ready // .state // "UNKNOWN"), (.endpoint_type // .task // "unknown")] | @tsv' 2>/dev/null \
-  | while IFS=$'\t' read -r name state etype; do
+  echo "$filtered" | jq -r '.[] | [.name, (.state.ready // .state // "UNKNOWN")] | @tsv' 2>/dev/null \
+  | while IFS=$'\t' read -r name state; do
     local marker="   "
     local display_name="$name"
     if [[ ${#display_name} -gt $col_w ]]; then
@@ -135,7 +172,7 @@ _display_claude_endpoints() {
       padded_state="${YELLOW}$(printf "%-${state_w}s" "$state")${RESET}"
     fi
 
-    echo -e "  ${marker}${padded_name} ${padded_state} ${etype}"
+    echo -e "  ${marker}${padded_name} ${padded_state}"
   done
 
   return 0

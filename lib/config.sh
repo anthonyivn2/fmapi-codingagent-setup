@@ -10,6 +10,7 @@ discover_config() {
   CFG_HOST="" CFG_PROFILE=""
   CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
   CFG_TTL=""
+  CFG_AI_GATEWAY="" CFG_WORKSPACE_ID=""
   CFG_SETTINGS_FILE="" CFG_HELPER_FILE=""
 
   # Find the first settings file with FMAPI config
@@ -44,6 +45,16 @@ discover_config() {
     cfg_ttl_ms=$(jq -r '.env.CLAUDE_CODE_API_KEY_HELPER_TTL_MS // empty' "$abs_path" 2>/dev/null) || true
     [[ -n "$cfg_ttl_ms" ]] && CFG_TTL=$(( cfg_ttl_ms / 60000 ))
 
+    # Detect AI Gateway v2 from ANTHROPIC_BASE_URL
+    local cfg_base_url=""
+    cfg_base_url=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$abs_path" 2>/dev/null) || true
+    if [[ "$cfg_base_url" =~ ^https://([0-9]+)\.ai-gateway\.cloud\.databricks\.com ]]; then
+      CFG_AI_GATEWAY="true"
+      CFG_WORKSPACE_ID="${BASH_REMATCH[1]}"
+    else
+      CFG_AI_GATEWAY="false"
+    fi
+
     break  # Use first match
   done
 }
@@ -51,7 +62,7 @@ discover_config() {
 # ── Config file loading ──────────────────────────────────────────────────────
 
 # Valid keys in config files (version is handled separately)
-_CONFIG_VALID_KEYS=("host" "profile" "model" "opus" "sonnet" "haiku" "ttl" "settings_location")
+_CONFIG_VALID_KEYS=("host" "profile" "model" "opus" "sonnet" "haiku" "ttl" "settings_location" "ai_gateway" "workspace_id")
 
 # Load and validate a local JSON config file.
 # Populates FILE_* variables for use in gather_config priority chain.
@@ -76,7 +87,7 @@ load_config_file() {
 
   # Reject unknown keys
   local unknown=""
-  unknown=$(jq -r 'keys[] | select(. != "version" and . != "host" and . != "profile" and . != "model" and . != "opus" and . != "sonnet" and . != "haiku" and . != "ttl" and . != "settings_location")' "$path") || true
+  unknown=$(jq -r 'keys[] | select(. != "version" and . != "host" and . != "profile" and . != "model" and . != "opus" and . != "sonnet" and . != "haiku" and . != "ttl" and . != "settings_location" and . != "ai_gateway" and . != "workspace_id")' "$path") || true
   if [[ -n "$unknown" ]]; then
     local unknown_list=""
     unknown_list=$(echo "$unknown" | paste -sd ',' - | sed 's/,/, /g')
@@ -107,6 +118,27 @@ load_config_file() {
       exit 1
     fi
     FILE_TTL="$raw_ttl"
+  fi
+
+  # Read gateway settings
+  local raw_ai_gateway=""
+  raw_ai_gateway=$(jq -r '.ai_gateway // empty' "$path") || true
+  if [[ -n "$raw_ai_gateway" ]]; then
+    if [[ "$raw_ai_gateway" != "true" ]] && [[ "$raw_ai_gateway" != "false" ]]; then
+      error "Config file: ai_gateway must be true or false. Got: $raw_ai_gateway"
+      exit 1
+    fi
+    FILE_AI_GATEWAY="$raw_ai_gateway"
+  fi
+
+  local raw_workspace_id=""
+  raw_workspace_id=$(jq -r '.workspace_id // empty' "$path") || true
+  if [[ -n "$raw_workspace_id" ]]; then
+    if ! [[ "$raw_workspace_id" =~ ^[0-9]+$ ]]; then
+      error "Config file: workspace_id must be numeric. Got: $raw_workspace_id"
+      exit 1
+    fi
+    FILE_WORKSPACE_ID="$raw_workspace_id"
   fi
 
   # Validate host format (if present)
