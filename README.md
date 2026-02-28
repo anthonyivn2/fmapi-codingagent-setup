@@ -266,7 +266,7 @@ Setup options (skip interactive prompts):
   --opus MODEL          Opus model (default: databricks-claude-opus-4-6)
   --sonnet MODEL        Sonnet model (default: databricks-claude-sonnet-4-6)
   --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
-  --ttl MINUTES         Token refresh interval in minutes (default: 5, max: 60)
+  --ttl MINUTES         Token refresh interval in minutes (default: 45, max: 60)
   --settings-location   Where to write settings: "home", "cwd", or path (default: home)
 
 Config file options:
@@ -284,7 +284,7 @@ Output options:
 
 #### Token Management
 
-Claude Code invokes the helper script every 5 minutes by default (configurable via `--ttl`, max 60 minutes). The helper calls `databricks auth token`, which returns the current OAuth access token and automatically refreshes it using the stored refresh token. If the refresh token has expired due to extended inactivity, the helper falls back to `databricks auth login` to trigger browser-based re-authentication.
+Claude Code invokes the helper script every 45 minutes by default (configurable via `--ttl`, max 60 minutes). The helper calls `databricks auth token`, which returns the current OAuth access token and automatically refreshes it using the stored refresh token. If the refresh token has expired due to extended inactivity, the helper falls back to `databricks auth login` to trigger browser-based re-authentication.
 
 ### Troubleshooting
 
