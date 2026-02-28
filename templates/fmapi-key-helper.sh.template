@@ -35,6 +35,9 @@ fi
 
 # Detect headless environments (SSH without display forwarding)
 _is_headless() {
+  # WSL can open a browser via Windows interop
+  [ -n "${WSL_DISTRO_NAME:-}" ] && return 1
+  [ -f /proc/version ] && grep -qi 'microsoft' /proc/version 2>/dev/null && return 1
   [ -n "${SSH_CONNECTION:-}" ] && [ -z "${DISPLAY:-}" ] && return 0
   [ -n "${SSH_TTY:-}" ] && [ -z "${DISPLAY:-}" ] && return 0
   [ ! -e /dev/tty ] && return 0

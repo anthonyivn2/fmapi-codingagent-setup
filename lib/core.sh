@@ -22,6 +22,24 @@ fi
 
 _OS_TYPE="$(uname -s 2>/dev/null || echo 'Unknown')"
 
+# WSL detection (experimental)
+_IS_WSL=false
+_WSL_VERSION=""
+if [[ "$_OS_TYPE" == "Linux" ]]; then
+  if [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
+    _IS_WSL=true
+  elif [[ -f /proc/version ]] && grep -qi 'microsoft' /proc/version 2>/dev/null; then
+    _IS_WSL=true
+  fi
+  if [[ "$_IS_WSL" == true ]]; then
+    if [[ -f /proc/version ]] && grep -qi 'microsoft-standard-WSL2' /proc/version 2>/dev/null; then
+      _WSL_VERSION="2"
+    else
+      _WSL_VERSION="1"
+    fi
+  fi
+fi
+
 VERBOSITY=1  # 0=quiet, 1=normal, 2=verbose
 DRY_RUN=false
 

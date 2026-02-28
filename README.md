@@ -27,7 +27,7 @@ FMAPI supports all of the coding agents listed below. Setup scripts automate the
 
 ## Claude Code
 
-**Prerequisites:** macOS or Linux, and a Databricks workspace with FMAPI enabled. Everything else is installed automatically. Windows is not currently supported.
+**Prerequisites:** macOS, Linux, or WSL (Windows Subsystem for Linux; experimental), and a Databricks workspace with FMAPI enabled. Everything else is installed automatically.
 
 ### Install
 
@@ -87,6 +87,26 @@ bash setup-fmapi-claudecode.sh
 ```
 
 If you install from source, replace `~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh` in the examples below with the path to your clone.
+
+</details>
+
+<details>
+<summary><strong>WSL (Windows) Notes — Experimental</strong></summary>
+
+WSL 1 and WSL 2 are both supported. WSL support is **experimental** — it has not yet been validated on real WSL environments. Please report any issues. The setup script auto-detects WSL and handles browser-based OAuth authentication.
+
+If the browser does not open automatically during OAuth login:
+
+1. **Install `wslu`** (recommended): `sudo apt-get install -y wslu` — provides `wslview` for opening URLs from WSL in your Windows browser.
+2. **Or set the `BROWSER` variable**: `export BROWSER='powershell.exe /c start'`
+
+WSL 2 with WSLg (GUI support) typically works without extra configuration.
+
+Run `--doctor` to verify your WSL environment:
+
+```bash
+bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --doctor
+```
 
 </details>
 

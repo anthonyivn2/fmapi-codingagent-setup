@@ -9,7 +9,7 @@ Usage: bash setup-fmapi-claudecode.sh [OPTIONS]
 Sets up Claude Code to use Databricks Foundation Model API (FMAPI).
 
 Prerequisites:
-  - macOS or Linux (dependencies installed automatically)
+  - macOS, Linux, or WSL [experimental] (dependencies installed automatically)
   - A Databricks workspace with Foundation Model API enabled
   - Access to Claude models via your Databricks workspace
 

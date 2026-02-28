@@ -215,6 +215,12 @@ authenticate() {
     if _is_headless; then
       echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Headless SSH session detected. Browser-based OAuth may not work."
     fi
+    if [[ "$_IS_WSL" == true ]]; then
+      if ! command -v wslview &>/dev/null && ! command -v xdg-open &>/dev/null; then
+        warn "WSL detected but no browser opener found."
+        info "If the browser does not open, install wslu: ${CYAN}sudo apt-get install -y wslu${RESET}"
+      fi
+    fi
     info "Logging in to ${DATABRICKS_HOST} ..."
     databricks auth login --host "$DATABRICKS_HOST" --profile "$DATABRICKS_PROFILE"
     OAUTH_TOKEN=$(_get_oauth_token "$DATABRICKS_PROFILE")

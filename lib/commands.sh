@@ -65,6 +65,12 @@ do_reauth() {
   if _is_headless; then
     echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Headless SSH session detected. Browser-based OAuth may not work."
   fi
+  if [[ "$_IS_WSL" == true ]]; then
+    if ! command -v wslview &>/dev/null && ! command -v xdg-open &>/dev/null; then
+      warn "WSL detected but no browser opener found."
+      info "If the browser does not open, install wslu: ${CYAN}sudo apt-get install -y wslu${RESET}"
+    fi
+  fi
   info "Re-authenticating with Databricks (profile: ${CFG_PROFILE}) ..."
   databricks auth login --host "$CFG_HOST" --profile "$CFG_PROFILE"
 
@@ -336,6 +342,30 @@ _doctor_dependencies() {
   [[ "$deps_ok" == true ]]
 }
 
+_doctor_environment() {
+  echo -e "  ${BOLD}Environment${RESET}"
+  echo -e "  ${DIM}INFO${RESET}  OS: ${_OS_TYPE}"
+
+  if [[ "$_IS_WSL" == true ]]; then
+    echo -e "  ${DIM}INFO${RESET}  WSL version: ${_WSL_VERSION:-unknown}  ${YELLOW}(experimental)${RESET}"
+    [[ -n "${WSL_DISTRO_NAME:-}" ]] && \
+      echo -e "  ${DIM}INFO${RESET}  WSL distro: ${WSL_DISTRO_NAME}"
+
+    if command -v wslview &>/dev/null; then
+      echo -e "  ${GREEN}${BOLD}PASS${RESET}  wslview available (wslu installed)"
+    elif command -v xdg-open &>/dev/null; then
+      echo -e "  ${GREEN}${BOLD}PASS${RESET}  xdg-open available"
+    elif [[ -n "${BROWSER:-}" ]]; then
+      echo -e "  ${GREEN}${BOLD}PASS${RESET}  BROWSER env var set: ${BROWSER}"
+    else
+      echo -e "  ${YELLOW}${BOLD}WARN${RESET}  No browser opener found  ${DIM}Fix: sudo apt-get install -y wslu${RESET}"
+    fi
+  fi
+
+  echo ""
+  return 0  # Informational only, never fails
+}
+
 _doctor_configuration() {
   echo -e "  ${BOLD}Configuration${RESET}"
   local config_ok=true
@@ -580,6 +610,7 @@ do_doctor() {
   local any_fail=false
 
   _doctor_dependencies || any_fail=true
+  _doctor_environment
   _doctor_configuration || any_fail=true
   _doctor_profile || any_fail=true
   _doctor_auth || any_fail=true
