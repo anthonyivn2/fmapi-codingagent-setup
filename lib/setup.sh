@@ -532,8 +532,63 @@ print_dry_run_plan() {
   echo -e "\n  ${DIM}No changes were made. Remove --dry-run to run setup.${RESET}\n"
 }
 
+_show_reuse_summary() {
+  echo -e "\n  ${BOLD}Existing configuration found:${RESET}\n"
+  echo -e "  ${DIM}Workspace${RESET}  ${BOLD}${CFG_HOST}${RESET}"
+  echo -e "  ${DIM}Profile${RESET}    ${BOLD}${CFG_PROFILE:-fmapi-claudecode-profile}${RESET}"
+  echo -e "  ${DIM}TTL${RESET}        ${BOLD}${CFG_TTL:-60}m${RESET}"
+  echo -e "  ${DIM}Model${RESET}      ${BOLD}${CFG_MODEL:-databricks-claude-opus-4-6}${RESET}"
+  echo -e "  ${DIM}Opus${RESET}       ${BOLD}${CFG_OPUS:-databricks-claude-opus-4-6}${RESET}"
+  echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${CFG_SONNET:-databricks-claude-sonnet-4-6}${RESET}"
+  echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${CFG_HAIKU:-databricks-claude-haiku-4-5}${RESET}"
+  echo -e "  ${DIM}Settings${RESET}   ${BOLD}${CFG_SETTINGS_FILE}${RESET}"
+  echo ""
+
+  select_option "Keep this configuration?" \
+    "Yes, proceed|re-run setup with existing config" \
+    "No, reconfigure|start fresh with all prompts"
+
+  if [[ "$SELECT_RESULT" -eq 1 ]]; then
+    return 0
+  fi
+  return 1
+}
+
 do_setup() {
   echo -e "\n${BOLD}  Claude Code x Databricks FMAPI Setup${RESET}\n"
+
+  # Fast-path: re-running with existing config — show summary + confirm
+  if [[ "$NON_INTERACTIVE" != true ]] && [[ "$DRY_RUN" != true ]] && command -v jq &>/dev/null; then
+    CFG_FOUND=false CFG_HOST="" CFG_PROFILE=""
+    CFG_MODEL="" CFG_OPUS="" CFG_SONNET="" CFG_HAIKU=""
+    CFG_TTL=""
+    CFG_SETTINGS_FILE="" CFG_HELPER_FILE=""
+    discover_config
+    if [[ "$CFG_FOUND" == true ]] && [[ -n "$CFG_HOST" ]]; then
+      if _show_reuse_summary; then
+        NON_INTERACTIVE=true
+        # Populate CLI_* from CFG_* (only if CLI_* is empty — preserves explicit flags)
+        [[ -z "$CLI_HOST" ]]     && CLI_HOST="$CFG_HOST"
+        [[ -z "$CLI_PROFILE" ]]  && CLI_PROFILE="${CFG_PROFILE:-fmapi-claudecode-profile}"
+        [[ -z "$CLI_TTL" ]]      && CLI_TTL="${CFG_TTL:-60}"
+        [[ -z "$CLI_MODEL" ]]    && CLI_MODEL="${CFG_MODEL:-databricks-claude-opus-4-6}"
+        [[ -z "$CLI_OPUS" ]]     && CLI_OPUS="${CFG_OPUS:-databricks-claude-opus-4-6}"
+        [[ -z "$CLI_SONNET" ]]   && CLI_SONNET="${CFG_SONNET:-databricks-claude-sonnet-4-6}"
+        [[ -z "$CLI_HAIKU" ]]    && CLI_HAIKU="${CFG_HAIKU:-databricks-claude-haiku-4-5}"
+        # Derive settings location from discovered settings file path
+        if [[ -z "$CLI_SETTINGS_LOCATION" ]] && [[ -n "$CFG_SETTINGS_FILE" ]]; then
+          local cfg_base="${CFG_SETTINGS_FILE%/.claude/settings.json}"
+          if [[ "$cfg_base" == "$HOME" ]]; then
+            CLI_SETTINGS_LOCATION="home"
+          else
+            CLI_SETTINGS_LOCATION="$cfg_base"
+          fi
+        fi
+      fi
+      # If _show_reuse_summary returns 1 (reconfigure), fall through to normal flow
+    fi
+  fi
+
   gather_config_pre_auth
 
   if [[ "$DRY_RUN" == true ]]; then

@@ -49,6 +49,24 @@ Then run setup:
 bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh
 ```
 
+<details>
+<summary><strong>Express One-Step Install + Setup</strong></summary>
+Use `--agent` to install and launch setup in a single command. Any additional flags are forwarded to the setup script:
+
+```bash
+# Interactive setup
+bash <(curl -sL https://raw.githubusercontent.com/anthonyivn2/fmapi-codingagent-setup/main/install.sh) \
+  --agent claude-code
+
+# Non-interactive setup
+bash <(curl -sL https://raw.githubusercontent.com/anthonyivn2/fmapi-codingagent-setup/main/install.sh) \
+  --agent claude-code --host https://my-workspace.cloud.databricks.com
+```
+
+The `--agent` flag accepts agent names like `claude-code` (hyphens are normalized automatically). If the agent name doesn't match any setup script, the installer lists available agents.
+
+</details><br>
+
 The script walks you through setup interactively: it asks for your Databricks workspace URL, a CLI profile name, which models to use (Opus, Sonnet, Haiku), and where to write the settings file. Sensible defaults are provided for everything except the workspace URL.
 
 Once complete you can proceed to run Claude Code as per usual:
@@ -139,7 +157,28 @@ Reports per-model status: **PASS** (exists and READY), **WARN** (exists but not 
 
 #### Re-running the Script
 
-You can safely re-run the setup script at any time to update the workspace URL, profile, or models, or to repair a missing or corrupted settings file. Existing values are shown as defaults &mdash; press Enter to keep them.
+You can safely re-run the setup script at any time to update the workspace URL, profile, or models, or to repair a missing or corrupted settings file.
+
+When you re-run setup interactively with an existing configuration, the script shows a summary of your current settings and asks whether to keep them or reconfigure:
+
+```
+  Existing configuration found:
+
+  Workspace  https://my-workspace.cloud.databricks.com
+  Profile    profile-name
+  TTL        ...
+  Model      ...
+  Opus       ...
+  Sonnet     ...
+  Haiku      ...
+  Settings   ...
+
+  ? Keep this configuration?
+  ❯ Yes, proceed    re-run setup with existing config
+    No, reconfigure start fresh with all prompts
+```
+
+Selecting **Yes, proceed** re-runs the full setup (dependencies, auth, settings, smoke test) without prompting for each value. Selecting **No, reconfigure** shows all prompts with your existing values as defaults. First-time users (no existing config) see the normal prompt flow.
 
 For a fully non-interactive re-run using your previously saved configuration:
 
@@ -197,6 +236,20 @@ bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --self-update
 ```
 
 Fetches the latest changes from the remote repository and updates in place. Shows how many commits are new and reports the version change. Requires the installation to be a git clone (both the quick installer and manual clone work).
+
+Re-running the installer (`bash <(curl ...) install.sh`) also works for updating. It shows a before/after version comparison:
+
+```
+  ok Updated from v1.0.0 → v1.1.0.
+```
+
+Or if already current:
+
+```
+  ok Already up to date at v1.1.0.
+```
+
+When updating an existing install that already has FMAPI configured, the installer prints a `--reinstall` hint so you can quickly refresh your setup with the latest script version.
 
 ### Plugin Skills
 
