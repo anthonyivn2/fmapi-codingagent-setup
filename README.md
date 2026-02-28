@@ -1,6 +1,8 @@
 # Coding Agents with Databricks Foundation Model API
 
-[Databricks Foundation Model API (FMAPI)](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis) gives Databricks users access to both frontier and open-source LLMs, served directly from your workspace with built-in governance and security.
+Databricks serves frontier and open-source LLMs through its [Foundation Model API (FMAPI)](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis) — and those same models can power coding agents like Claude Code, OpenAI Codex, Gemini CLI, and many others! This repo automates the setup so you can point your favorite coding agent at your Databricks workspace with built-in governance, security, and usage tracking.
+
+> *If you are wondering, yes, this repo was built by coding agents powered by LLMs in Databricks Foundation Model API. We like to dogfood our own products.*
 
 ## What You Get
 
@@ -10,9 +12,6 @@
 - **Built-in diagnostics and model validation** &mdash; `--doctor`, `--list-models`, `--validate-models`
 - **Plugin slash commands** &mdash; manage your FMAPI config without leaving Claude Code
 - **Built-in Usage Tracking and Payload Logging through Databricks AI Gateway** &mdash; Leverage Databricks's [AI Gateway Usage Tracking](https://docs.databricks.com/aws/en/ai-gateway/configure-ai-gateway-endpoints#configure-ai-gateway-using-the-ui) to track and audit Coding Agent usage for your organization, and track your Coding Agent request and response payload through the use of [AI Gateway Inference Table](https://docs.databricks.com/aws/en/ai-gateway/inference-tables)
-
-
-> *This repo is built and maintained with the help of coding agents running with Databricks Foundation Model API. We dogfood our own products around here*
 
 ## Supported Agents
 
