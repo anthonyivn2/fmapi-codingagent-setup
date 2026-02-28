@@ -22,5 +22,6 @@ bash "<install-path>/setup-fmapi-claudecode.sh" --status
 
    - **Green (active)**: OAuth session is valid. No action needed.
    - **Red (expired)**: OAuth session has expired. Suggest running `/fmapi-codingagent-reauth` to re-authenticate, or `/fmapi-codingagent-setup` to reconfigure.
+   - **Routing**: Shows whether Serving Endpoints (v1) or AI Gateway v2 (beta) is configured. When AI Gateway is enabled, also displays the workspace ID and base URL.
 
 4. If the command exits with an error indicating no config was found, inform the user they need to run `/fmapi-codingagent-setup` first.

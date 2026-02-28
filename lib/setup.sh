@@ -44,6 +44,29 @@ gather_config_pre_auth() {
     exit 1
   fi
 
+  # ── API routing mode (AI Gateway v2) ────────────────────────────────────
+  local default_ai_gateway
+  default_ai_gateway=$(_default "$CLI_AI_GATEWAY" "$FILE_AI_GATEWAY" "$CFG_AI_GATEWAY" "false")
+
+  if [[ "$NON_INTERACTIVE" == true ]]; then
+    AI_GATEWAY_ENABLED="$default_ai_gateway"
+  else
+    select_option "API routing mode" \
+      "Serving Endpoints|default" \
+      "AI Gateway v2 (beta)|requires account preview enablement"
+    if [[ "$SELECT_RESULT" -eq 2 ]]; then
+      AI_GATEWAY_ENABLED="true"
+      echo -e "  ${YELLOW}${BOLD}NOTE${RESET}  AI Gateway v2 is a ${BOLD}Beta${RESET} feature (${DIM}https://docs.databricks.com/aws/en/release-notes/release-types${RESET})."
+      echo -e "        Account admins must enable it from the account console Previews page."
+      echo -e "        ${DIM}https://docs.databricks.com/aws/en/admin/workspace-settings/manage-previews${RESET}"
+    else
+      AI_GATEWAY_ENABLED="false"
+    fi
+  fi
+
+  # Store pending workspace ID for post-auth resolution
+  _PENDING_WORKSPACE_ID=$(_default "$CLI_WORKSPACE_ID" "$FILE_WORKSPACE_ID" "$CFG_WORKSPACE_ID" "")
+
   # ── CLI profile ───────────────────────────────────────────────────────────
   prompt_value DATABRICKS_PROFILE "Databricks CLI profile name" "$CLI_PROFILE" "$default_profile"
   if [[ -z "$DATABRICKS_PROFILE" ]]; then
@@ -252,6 +275,50 @@ authenticate() {
   fi
 }
 
+resolve_workspace_id() {
+  if [[ "${AI_GATEWAY_ENABLED:-false}" != "true" ]]; then
+    WORKSPACE_ID=""
+    return 0
+  fi
+
+  [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}Resolving workspace ID${RESET}"
+
+  if [[ -n "${_PENDING_WORKSPACE_ID:-}" ]]; then
+    WORKSPACE_ID="$_PENDING_WORKSPACE_ID"
+    success "Using workspace ID: ${WORKSPACE_ID}"
+    return 0
+  fi
+
+  # Auto-detect from API response header
+  info "Detecting workspace ID from ${DATABRICKS_HOST} ..."
+  local detected_id=""
+  detected_id=$(_detect_workspace_id "$DATABRICKS_PROFILE" "$DATABRICKS_HOST") || true
+
+  if [[ -n "$detected_id" ]]; then
+    WORKSPACE_ID="$detected_id"
+    success "Detected workspace ID: ${WORKSPACE_ID}"
+    return 0
+  fi
+
+  # Auto-detection failed
+  if [[ "$NON_INTERACTIVE" == true ]]; then
+    error "Could not auto-detect workspace ID. Use --workspace-id to provide it manually."
+    exit 1
+  fi
+
+  # Interactive fallback: prompt the user
+  echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Could not auto-detect workspace ID."
+  read -rp "$(echo -e "  ${CYAN}?${RESET} Databricks workspace ID: ")" WORKSPACE_ID
+  if [[ -z "$WORKSPACE_ID" ]]; then
+    error "Workspace ID is required for AI Gateway v2."
+    exit 1
+  fi
+  if ! [[ "$WORKSPACE_ID" =~ ^[0-9]+$ ]]; then
+    error "Workspace ID must be numeric. Got: $WORKSPACE_ID"
+    exit 1
+  fi
+}
+
 write_settings() {
   [[ "$VERBOSITY" -ge 1 ]] && echo -e "\n${BOLD}Writing settings${RESET}"
 
@@ -259,10 +326,13 @@ write_settings() {
 
   TTL_MS="$FMAPI_TTL_MS"
 
+  local base_url=""
+  base_url=$(_build_base_url "$DATABRICKS_HOST" "${AI_GATEWAY_ENABLED:-false}" "${WORKSPACE_ID:-}")
+
   local env_json=""
   env_json=$(jq -n \
     --arg model "$ANTHROPIC_MODEL" \
-    --arg base  "${DATABRICKS_HOST}/serving-endpoints/anthropic" \
+    --arg base  "$base_url" \
     --arg opus "$ANTHROPIC_OPUS_MODEL" \
     --arg sonnet "$ANTHROPIC_SONNET_MODEL" \
     --arg haiku "$ANTHROPIC_HAIKU_MODEL" \
@@ -416,7 +486,22 @@ run_smoke_test() {
       (( warnings++ )) || true
     fi
 
-    # 3. Configured models exist and are ready
+    # 3. Gateway connectivity (if enabled)
+    if [[ "${AI_GATEWAY_ENABLED:-false}" == "true" ]] && [[ -n "${WORKSPACE_ID:-}" ]]; then
+      local gw_url="https://${WORKSPACE_ID}.ai-gateway.cloud.databricks.com/anthropic/v1/messages"
+      local gw_code=""
+      gw_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+        -H "Authorization: Bearer ${oauth_tok}" \
+        "$gw_url" 2>/dev/null) || true
+      if [[ -n "$gw_code" && "$gw_code" != "000" ]]; then
+        success "AI Gateway v2 reachable (HTTP ${gw_code})."
+      else
+        echo -e "  ${YELLOW}${BOLD}WARN${RESET}  Cannot reach AI Gateway v2 at ${gw_url}."
+        (( warnings++ )) || true
+      fi
+    fi
+
+    # 4. Configured models exist and are ready
     # Temporarily set CFG_ vars so _validate_models_report can work
     local CFG_MODEL="$ANTHROPIC_MODEL"
     local CFG_OPUS="$ANTHROPIC_OPUS_MODEL"
@@ -451,6 +536,15 @@ print_summary() {
   echo -e "  ${DIM}Opus${RESET}       ${BOLD}${ANTHROPIC_OPUS_MODEL}${RESET}"
   echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
   echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
+  if [[ "${AI_GATEWAY_ENABLED:-false}" == "true" ]]; then
+    local gw_base_url=""
+    gw_base_url=$(_build_base_url "$DATABRICKS_HOST" "true" "${WORKSPACE_ID:-}")
+    echo -e "  ${DIM}Routing${RESET}    ${BOLD}AI Gateway v2 (beta)${RESET}"
+    echo -e "  ${DIM}Workspace ID${RESET} ${BOLD}${WORKSPACE_ID}${RESET}"
+    echo -e "  ${DIM}Base URL${RESET}   ${BOLD}${gw_base_url}${RESET}"
+  else
+    echo -e "  ${DIM}Routing${RESET}    ${BOLD}Serving Endpoints (v1)${RESET}"
+  fi
   echo -e "  ${DIM}Auth${RESET}       ${BOLD}OAuth (auto-refresh, ${FMAPI_TTL_MINUTES}m check interval)${RESET}"
   echo -e "  ${DIM}Helper${RESET}     ${BOLD}${HELPER_FILE}${RESET}"
   echo -e "  ${DIM}Settings${RESET}   ${BOLD}${SETTINGS_FILE}${RESET}"
@@ -478,7 +572,32 @@ print_dry_run_plan() {
   echo -e "  ${CYAN}::${RESET}  CLI profile: ${BOLD}${DATABRICKS_PROFILE}${RESET}"
   echo ""
 
+  # Routing
+  echo -e "  ${BOLD}Routing${RESET}"
+  if [[ "${AI_GATEWAY_ENABLED:-false}" == "true" ]]; then
+    local dry_ws_id="${_PENDING_WORKSPACE_ID:-<to be detected>}"
+    local dry_base_url=""
+    if [[ "$dry_ws_id" != "<to be detected>" ]]; then
+      dry_base_url=$(_build_base_url "$DATABRICKS_HOST" "true" "$dry_ws_id")
+    else
+      dry_base_url="https://<workspace-id>.ai-gateway.cloud.databricks.com/anthropic"
+    fi
+    echo -e "  ${CYAN}::${RESET}  Mode: ${BOLD}AI Gateway v2 (beta)${RESET}"
+    echo -e "  ${CYAN}::${RESET}  Workspace ID: ${BOLD}${dry_ws_id}${RESET}"
+    echo -e "  ${CYAN}::${RESET}  Base URL: ${BOLD}${dry_base_url}${RESET}"
+  else
+    echo -e "  ${CYAN}::${RESET}  Mode: ${BOLD}Serving Endpoints (v1)${RESET}"
+  fi
+  echo ""
+
   # Settings
+  local dry_run_base_url=""
+  if [[ "${AI_GATEWAY_ENABLED:-false}" == "true" ]]; then
+    local ws_id_for_url="${_PENDING_WORKSPACE_ID:-<workspace-id>}"
+    dry_run_base_url=$(_build_base_url "$DATABRICKS_HOST" "true" "$ws_id_for_url")
+  else
+    dry_run_base_url=$(_build_base_url "$DATABRICKS_HOST" "false" "")
+  fi
   echo -e "  ${BOLD}Settings${RESET}"
   echo -e "  ${CYAN}::${RESET}  Settings file: ${BOLD}${SETTINGS_FILE}${RESET}"
   if [[ -f "$SETTINGS_FILE" ]]; then
@@ -488,7 +607,7 @@ print_dry_run_plan() {
   fi
   echo -e "  ${CYAN}::${RESET}  Env vars that would be set:"
   echo -e "       ANTHROPIC_MODEL=${BOLD}${ANTHROPIC_MODEL}${RESET}"
-  echo -e "       ANTHROPIC_BASE_URL=${BOLD}${DATABRICKS_HOST}/serving-endpoints/anthropic${RESET}"
+  echo -e "       ANTHROPIC_BASE_URL=${BOLD}${dry_run_base_url}${RESET}"
   echo -e "       ANTHROPIC_DEFAULT_OPUS_MODEL=${BOLD}${ANTHROPIC_OPUS_MODEL}${RESET}"
   echo -e "       ANTHROPIC_DEFAULT_SONNET_MODEL=${BOLD}${ANTHROPIC_SONNET_MODEL}${RESET}"
   echo -e "       ANTHROPIC_DEFAULT_HAIKU_MODEL=${BOLD}${ANTHROPIC_HAIKU_MODEL}${RESET}"
@@ -547,6 +666,12 @@ _show_reuse_summary() {
   echo -e "  ${DIM}Opus${RESET}       ${BOLD}${CFG_OPUS:-databricks-claude-opus-4-6}${RESET}"
   echo -e "  ${DIM}Sonnet${RESET}     ${BOLD}${CFG_SONNET:-databricks-claude-sonnet-4-6}${RESET}"
   echo -e "  ${DIM}Haiku${RESET}      ${BOLD}${CFG_HAIKU:-databricks-claude-haiku-4-5}${RESET}"
+  if [[ "${CFG_AI_GATEWAY:-}" == "true" ]]; then
+    echo -e "  ${DIM}Routing${RESET}    ${BOLD}AI Gateway v2 (beta)${RESET}"
+    echo -e "  ${DIM}Workspace ID${RESET} ${BOLD}${CFG_WORKSPACE_ID:-unknown}${RESET}"
+  else
+    echo -e "  ${DIM}Routing${RESET}    ${BOLD}Serving Endpoints (v1)${RESET}"
+  fi
   echo -e "  ${DIM}Settings${RESET}   ${BOLD}${CFG_SETTINGS_FILE}${RESET}"
   echo ""
 
@@ -581,6 +706,8 @@ do_setup() {
         [[ -z "$CLI_OPUS" ]]     && CLI_OPUS="${CFG_OPUS:-databricks-claude-opus-4-6}"
         [[ -z "$CLI_SONNET" ]]   && CLI_SONNET="${CFG_SONNET:-databricks-claude-sonnet-4-6}"
         [[ -z "$CLI_HAIKU" ]]    && CLI_HAIKU="${CFG_HAIKU:-databricks-claude-haiku-4-5}"
+        [[ -z "$CLI_AI_GATEWAY" ]] && CLI_AI_GATEWAY="${CFG_AI_GATEWAY:-false}"
+        [[ -z "$CLI_WORKSPACE_ID" ]] && CLI_WORKSPACE_ID="${CFG_WORKSPACE_ID:-}"
         # Derive settings location from discovered settings file path
         if [[ -z "$CLI_SETTINGS_LOCATION" ]] && [[ -n "$CFG_SETTINGS_FILE" ]]; then
           local cfg_base="${CFG_SETTINGS_FILE%/.claude/settings.json}"
@@ -605,6 +732,7 @@ do_setup() {
 
   install_dependencies
   authenticate
+  resolve_workspace_id
 
   # Show available Claude endpoints before model selection (interactive only)
   if [[ "$NON_INTERACTIVE" != true ]]; then

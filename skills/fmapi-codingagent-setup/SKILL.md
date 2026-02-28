@@ -43,6 +43,8 @@ bash "<install-path>/setup-fmapi-claudecode.sh" \
 | `--haiku MODEL` | Haiku model | `--haiku databricks-claude-haiku-4-5` |
 | `--ttl MINUTES` | Token refresh interval in minutes (default: `60`, max: `60`, 60 recommended) | `--ttl 60` |
 | `--settings-location PATH` | Where to write settings (`home`, `cwd`, or a custom path) | `--settings-location home` |
+| `--ai-gateway` | Use AI Gateway v2 for API routing (beta, default: off) | `--ai-gateway` |
+| `--workspace-id ID` | Databricks workspace ID for AI Gateway (auto-detected if omitted) | `--workspace-id 1234567890` |
 | `--config PATH` | Load configuration from a local JSON file | `--config ./my-config.json` |
 | `--config-url URL` | Load configuration from a remote JSON URL (HTTPS only) | `--config-url https://example.com/cfg.json` |
 | `--verbose` | Show debug-level output | `--verbose` |

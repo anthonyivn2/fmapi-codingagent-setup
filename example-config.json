@@ -7,5 +7,7 @@
   "sonnet": "databricks-claude-sonnet-4-6",
   "haiku": "databricks-claude-haiku-4-5",
   "ttl": 60,
-  "settings_location": "home"
+  "settings_location": "home",
+  "ai_gateway": false,
+  "workspace_id": ""
 }
