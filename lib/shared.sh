@@ -145,6 +145,8 @@ _display_claude_endpoints() {
 
 # Detect headless SSH sessions (no browser for OAuth)
 _is_headless() {
+  # WSL can open a browser via Windows interop
+  [[ "$_IS_WSL" == true ]] && return 1
   [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_TTY:-}" ]] && [[ -z "${DISPLAY:-}" ]]
 }
 

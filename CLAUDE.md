@@ -72,7 +72,7 @@ The setup script is split into six sourced library modules under `lib/`. The ent
 
 | Module | Contents |
 |---|---|
-| `lib/core.sh` | Cleanup trap, ANSI colors, `_OS_TYPE`/`VERBOSITY`/`DRY_RUN`/`FMAPI_VERSION` globals, logging (`info`, `success`, `error`, `debug`), utilities (`array_contains`, `require_cmd`, `_install_hint`, `prompt_value`, `select_option`) |
+| `lib/core.sh` | Cleanup trap, ANSI colors, `_OS_TYPE`/`_IS_WSL`/`_WSL_VERSION`/`VERBOSITY`/`DRY_RUN`/`FMAPI_VERSION` globals, logging (`info`, `success`, `error`, `debug`), utilities (`array_contains`, `require_cmd`, `_install_hint`, `prompt_value`, `select_option`) |
 | `lib/help.sh` | `show_help()` — static help text, no dependencies |
 | `lib/config.sh` | `discover_config()`, `_CONFIG_VALID_KEYS`, `load_config_file()`, `load_config_url()` |
 | `lib/shared.sh` | `_get_oauth_token()`, `_fetch_endpoints()`, `_validate_models_report()`, plus shared helpers: `_is_headless()`, `_require_fmapi_config()`, `_require_valid_oauth()` |
@@ -173,6 +173,9 @@ There are no automated tests. To verify changes:
 37. Run `bash install.sh --branch v1.0.0` — verify it installs a specific tag.
 38. Run `FMAPI_HOME=/tmp/test bash install.sh` — verify it installs to custom location.
 39. Run `bash ~/.fmapi-codingagent-setup/setup-fmapi-claudecode.sh --self-update` — verify it works from installed location.
+40. Run on WSL — verify `_IS_WSL` is `true` and `_WSL_VERSION` is detected correctly.
+41. Run `--doctor` on WSL — verify Environment section shows WSL version, distro, and "(experimental)".
+42. On WSL without `wslu` or `xdg-open`, run setup — verify browser opener warning appears.
 
 ## Abbreviations
 
