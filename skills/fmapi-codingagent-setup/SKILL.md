@@ -41,7 +41,7 @@ bash "<install-path>/setup-fmapi-claudecode.sh" \
 | `--opus MODEL` | Opus model | `--opus databricks-claude-opus-4-6` |
 | `--sonnet MODEL` | Sonnet model | `--sonnet databricks-claude-sonnet-4-6` |
 | `--haiku MODEL` | Haiku model | `--haiku databricks-claude-haiku-4-5` |
-| `--ttl MINUTES` | Token refresh interval in minutes (default: `5`, max: `60`) | `--ttl 10` |
+| `--ttl MINUTES` | Token refresh interval in minutes (default: `60`, max: `60`, 60 recommended) | `--ttl 60` |
 | `--settings-location PATH` | Where to write settings (`home`, `cwd`, or a custom path) | `--settings-location home` |
 | `--config PATH` | Load configuration from a local JSON file | `--config ./my-config.json` |
 | `--config-url URL` | Load configuration from a remote JSON URL (HTTPS only) | `--config-url https://example.com/cfg.json` |

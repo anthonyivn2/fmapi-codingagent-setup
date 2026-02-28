@@ -339,7 +339,7 @@ Setup options (skip interactive prompts):
   --opus MODEL          Opus model (default: databricks-claude-opus-4-6)
   --sonnet MODEL        Sonnet model (default: databricks-claude-sonnet-4-6)
   --haiku MODEL         Haiku model (default: databricks-claude-haiku-4-5)
-  --ttl MINUTES         Token refresh interval in minutes (default: 60, max: 60)
+  --ttl MINUTES         Token refresh interval in minutes (default: 60, max: 60, 60 recommended)
   --settings-location   Where to write settings: "home", "cwd", or path (default: home)
 
 Config file options:

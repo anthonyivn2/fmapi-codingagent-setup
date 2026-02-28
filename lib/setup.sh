@@ -56,7 +56,7 @@ gather_config_pre_auth() {
   fi
 
   # ── Token refresh interval ───────────────────────────────────────────────
-  prompt_value FMAPI_TTL_MINUTES "Token refresh interval (minutes)" "$CLI_TTL" "$default_ttl"
+  prompt_value FMAPI_TTL_MINUTES "Token refresh interval in minutes (60 recommended)" "$CLI_TTL" "$default_ttl"
   if ! [[ "$FMAPI_TTL_MINUTES" =~ ^[0-9]+$ ]] || [[ "$FMAPI_TTL_MINUTES" -le 0 ]]; then
     error "Token refresh interval must be a positive integer (minutes)."
     exit 1
